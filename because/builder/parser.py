@@ -66,9 +66,10 @@ class FormulaParser:
             eq_clean = eq.replace(" ", "")
             
             if "~" not in eq_clean:
-                raise ValueError(f"Invalid formula (missing ~): {eq}")
-                
-            lhs, rhs = eq_clean.split("~", 1)
+                # Isolated variable in equations list, treat as intercept-only
+                lhs, rhs = eq_clean, "1"
+            else:
+                lhs, rhs = eq_clean.split("~", 1)
             response = lhs if lhs else None
             
             # Split RHS by '+' but be careful not to split inside parentheses like (1|group) or I(A+B)

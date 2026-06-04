@@ -1,11 +1,12 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
-from numpyro.infer import MCMC, NUTS
-
+import numpyro.distributions as dist
+from numpyro.infer import MCMC, NUTS, Predictive
+import numpyro.diagnostics as diag
 from .builder import FormulaParser, CausalGraph, NumPyroBuilder
 
-def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False, dsep_only=False, calculate_waic=False, num_samples=1000, num_warmup=500, num_chains=1, thinning=1, seed=0, dsep_max_obs=2000, quiet=False):
+def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False, dsep_only=False, calculate_waic=False, num_samples=1000, num_warmup=500, num_chains=1, thinning=1, n_cores=1, seed=0, dsep_max_obs=2000, quiet=False):
     """
     High-level API for because-py. Fits a causal hierarchical model using NumPyro.
     
@@ -28,12 +29,23 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
         family = {}
         
     if not quiet:
-        print("Parsing equations...")
+        print("Compiling NumPyro model graph")
+        print("   Resolving causal relationships")
+        print("   Allocating nodes")
+        
     parser = FormulaParser(equations)
     parsed = parser.parse()
     deterministic_terms = parser.deterministic_terms
     
     # Auto-detect latents: variables in equations but not in data
+    if n_cores > 1:
+        try:
+            import numpyro
+            numpyro.set_host_device_count(n_cores)
+        except Exception as e:
+            if not quiet:
+                print(f"Warning: Failed to set numpyro host device count to {n_cores}: {e}")
+                
     if latent is None:
         vars_in_eqs = set()
         for eq in parsed:
@@ -42,15 +54,16 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
             vars_in_eqs.update(eq["fixed"])
             
         latent = list(vars_in_eqs - set(data.keys()) - set(deterministic_terms.keys()))
-        if latent and not quiet:
-            print(f"Auto-detected latent variables: {latent}")
             
     graph = CausalGraph(parsed, deterministic_terms=deterministic_terms)
     graph.build()
     
     if not quiet:
-        print(f"Graph topological order: {graph.get_topological_order()}")
-        print("Compiling core NumPyro model...")
+        print("Graph information:")
+        print(f"   Observed stochastic nodes: {len(data)}")
+        unobserved = len(latent) if latent else 0
+        print(f"   Unobserved stochastic nodes: {unobserved}")
+        print("\nInitializing model")
         
     compiler = NumPyroBuilder(graph, family_dict=family, deterministic_terms=deterministic_terms, cor_matrices=cor_matrices)
     model_func = compiler.generate_model_function(data_for_compilation=data)
@@ -61,17 +74,11 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
     results = {}
     
     if not dsep_only:
-        if not quiet:
-            print(f"Compiling model via NumPyro...")
-            
         rng_key = jax.random.PRNGKey(seed)
         rng_key, subkey = jax.random.split(rng_key)
         
         mcmc = MCMC(NUTS(model_func), num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains, thinning=thinning, progress_bar=not quiet)
         
-        if not quiet:
-            print("Sampling...")
-            
         mcmc.run(subkey, **jax_data)
         
         samples = mcmc.get_samples(group_by_chain=True)
@@ -133,7 +140,7 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
         
         if not quiet:
             test_desc = "(Induced Correlation)" if claim_type == "correlation" else "(Conditional Independence)"
-            print(f"\n[Test {i+1}/{len(dsep_equations)}] {eq_str}  {test_desc}")
+            print(f"\n[Test {i+1} / {len(dsep_equations)}]  {eq_str}  {test_desc}")
             
         test_parser = FormulaParser([eq_str])
         test_parsed = test_parser.parse()
@@ -145,26 +152,36 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
         
         rng_key, subkey = jax.random.split(rng_key)
         
-        # We run a faster MCMC for dsep (just enough to get confident intervals)
-        test_mcmc = MCMC(NUTS(test_model_func), num_warmup=300, num_samples=500, num_chains=1, thinning=1, progress_bar=False)
+        # We run MCMC for the dsep test using the same parameters as the main model
+        # To get valid Rhat, we enforce at least 2 chains if the user requested less than 2
+        dsep_chains = max(2, num_chains)
+        test_mcmc = MCMC(NUTS(test_model_func), num_warmup=num_warmup, num_samples=num_samples, num_chains=dsep_chains, thinning=thinning, progress_bar=False)
         test_mcmc.run(subkey, **jax_dsep_data)
         
-        samples = test_mcmc.get_samples()
+        # We need grouped samples for Rhat and neff calculations
+        samples_grouped = test_mcmc.get_samples(group_by_chain=True)
+        # We also want flat samples for easy percentiles
+        samples_flat = {k: np.asarray(v).flatten() for k, v in samples_grouped.items()}
+        
         beta_name = f"beta_{resp}_{test_var}"
         
-        if beta_name in samples:
-            posteriors = np.asarray(samples[beta_name])
+        if beta_name in samples_flat:
+            posteriors = samples_flat[beta_name]
             mean_val = float(np.mean(posteriors))
             # 95% HPDI (using percentile for simplicity in this base implementation)
             ci_lower = float(np.percentile(posteriors, 2.5))
             ci_upper = float(np.percentile(posteriors, 97.5))
             
+            # Compute Rhat and neff
+            chain_samples = np.asarray(samples_grouped[beta_name])
+            rhat = float(diag.gelman_rubin(chain_samples))
+            n_eff = float(diag.effective_sample_size(chain_samples))
+            
             # If the 95% CI includes 0, it is conditionally independent
             is_independent = (ci_lower < 0 < ci_upper)
             
             if not quiet:
-                status = "PASS (Independent)" if is_independent else "FAIL (Dependent)"
-                print(f" -> {beta_name} = {mean_val:.3f} [{ci_lower:.3f}, {ci_upper:.3f}] - {status}")
+                print(f" -> {beta_name} = {mean_val:.3f} [{ci_lower:.3f}, {ci_upper:.3f}]")
                 
             dsep_results.append({
                 "claim": f"{resp} _|_ {test_var} | {', '.join(claim['conditioning_set'])}",
@@ -173,7 +190,9 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
                 "mean": mean_val,
                 "ci_2.5": ci_lower,
                 "ci_97.5": ci_upper,
-                "is_independent": is_independent
+                "is_independent": is_independent,
+                "rhat": rhat,
+                "n_eff": n_eff
             })
             
     results["dsep_results"] = dsep_results
