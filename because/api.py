@@ -80,7 +80,10 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
         rng_key = jax.random.PRNGKey(seed)
         rng_key, subkey = jax.random.split(rng_key)
         
-        mcmc = MCMC(NUTS(model_func), num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains, thinning=thinning, progress_bar=not quiet)
+        import warnings
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*There are not enough devices to run parallel chains.*")
+            mcmc = MCMC(NUTS(model_func), num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains, thinning=thinning, progress_bar=not quiet)
         
         mcmc.run(subkey, **jax_data)
         
@@ -158,7 +161,10 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
         # We run MCMC for the dsep test using the same parameters as the main model
         # To get valid Rhat, we enforce at least 2 chains if the user requested less than 2
         dsep_chains = max(2, num_chains)
-        test_mcmc = MCMC(NUTS(test_model_func), num_warmup=num_warmup, num_samples=num_samples, num_chains=dsep_chains, thinning=thinning, progress_bar=False)
+        import warnings
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*There are not enough devices to run parallel chains.*")
+            test_mcmc = MCMC(NUTS(test_model_func), num_warmup=num_warmup, num_samples=num_samples, num_chains=dsep_chains, thinning=thinning, progress_bar=False)
         test_mcmc.run(subkey, **jax_dsep_data)
         
         # We need grouped samples for Rhat and neff calculations
