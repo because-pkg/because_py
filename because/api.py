@@ -25,6 +25,9 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
     
     :return: A dictionary containing the fitted MCMC object and optional dsep results.
     """
+    if isinstance(equations, str):
+        equations = [equations]
+        
     if not isinstance(family, dict):
         family = {}
         
