@@ -5,7 +5,7 @@ from numpyro.infer import MCMC, NUTS
 
 from .builder import FormulaParser, CausalGraph, NumPyroBuilder
 
-def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False, dsep_only=False, calculate_waic=False, num_samples=1000, num_warmup=500, num_chains=1, seed=0, dsep_max_obs=2000, quiet=False):
+def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False, dsep_only=False, calculate_waic=False, num_samples=1000, num_warmup=500, num_chains=1, thinning=1, seed=0, dsep_max_obs=2000, quiet=False):
     """
     High-level API for because-py. Fits a causal hierarchical model using NumPyro.
     
@@ -17,6 +17,7 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
     :param num_samples: Number of post-warmup MCMC samples.
     :param num_warmup: Number of warmup MCMC samples.
     :param num_chains: Number of parallel MCMC chains.
+    :param thinning: Thinning interval for MCMC samples.
     :param seed: Random seed for JAX PRNGKey.
     :param dsep_max_obs: Maximum number of observations to use for d-sep tests (random subsampling) for speed.
     :param quiet: Boolean, if True, suppresses MCMC progress bars.
@@ -66,7 +67,7 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
         rng_key = jax.random.PRNGKey(seed)
         rng_key, subkey = jax.random.split(rng_key)
         
-        mcmc = MCMC(NUTS(model_func), num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains, progress_bar=not quiet)
+        mcmc = MCMC(NUTS(model_func), num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains, thinning=thinning, progress_bar=not quiet)
         
         if not quiet:
             print("Sampling...")
@@ -145,7 +146,7 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
         rng_key, subkey = jax.random.split(rng_key)
         
         # We run a faster MCMC for dsep (just enough to get confident intervals)
-        test_mcmc = MCMC(NUTS(test_model_func), num_warmup=300, num_samples=500, num_chains=1, progress_bar=False)
+        test_mcmc = MCMC(NUTS(test_model_func), num_warmup=300, num_samples=500, num_chains=1, thinning=1, progress_bar=False)
         test_mcmc.run(subkey, **jax_dsep_data)
         
         samples = test_mcmc.get_samples()
