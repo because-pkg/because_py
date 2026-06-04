@@ -76,10 +76,11 @@ class CausalGraph:
             non_descendants = preceding_nodes - parents_vi
             
             for vj in non_descendants:
+                parents_vj = set(self.dag.predecessors(vj))
                 basis_set.append({
                     "response": vi,
                     "test_node": vj,
-                    "conditioning_set": list(parents_vi)
+                    "conditioning_set": list(parents_vi | parents_vj)
                 })
                 
         # Filtering
