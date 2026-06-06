@@ -149,12 +149,36 @@ class CausalGraph:
         basis = self.get_basis_set(latent=latent)
         dsep_equations = []
         
+        root_nodes = [n for n in self.dag.nodes if self.dag.in_degree(n) == 0]
+        
+        # Determine latent children if latents exist
+        latent_children = set()
+        if latent:
+            for l in latent:
+                latent_children.update(self.dag.successors(l))
+                
         # 1. Standard / Filtered Basis Set Claims
         for claim in basis:
             resp = claim["response"]
             test_var = claim["test_node"]
             cond = claim["conditioning_set"]
             
+            # Rule 1: Latent child swap
+            # If resp is a latent child and test_var is not -> swap
+            if latent:
+                r_lc = resp in latent_children
+                t_lc = test_var in latent_children
+                if r_lc and not t_lc:
+                    resp, test_var = test_var, resp
+                    
+            # Rule 2: Root node swap
+            # Root nodes (no parents) should always be predictors, never responses.
+            # If resp is a root node and test_var is not -> swap
+            r_root = resp in root_nodes
+            t_root = test_var in root_nodes
+            if r_root and not t_root:
+                resp, test_var = test_var, resp
+                
             orig_eq = self.parsed_equations.get(resp)
             random_terms = orig_eq["random"] if orig_eq else []
             

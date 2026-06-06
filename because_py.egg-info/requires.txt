@@ -1,0 +1,4 @@
+numpyro
+jax
+jaxlib
+numpy

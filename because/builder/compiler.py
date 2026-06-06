@@ -33,8 +33,12 @@ class NumPyroBuilder:
         import jax.numpy as jnp
         import jax
         L_matrices = {}
+        custom_transforms = {}
         for k, mat in cor_mats.items():
             import numpy as np
+            if isinstance(mat, dict) and "matrix" in mat and "transform_func" in mat:
+                custom_transforms[k] = mat
+                continue
             mat = np.array(mat, dtype=float)
             L_matrices[k] = jax.scipy.linalg.cholesky(mat, lower=True)
         
@@ -43,11 +47,14 @@ class NumPyroBuilder:
             import numpyro.distributions as dist
             import jax.numpy as jnp
             import numpy as np
+            import jax
             
             computed_vars = dict(data)
             
             # Infer dataset size N
             N = len(next(iter(data.values()))) if data else 1
+            
+            shared_state = {}
             
             for var in topo_order:
                 # 1. Deterministic Node Evaluation
@@ -148,7 +155,9 @@ class NumPyroBuilder:
                     sigma_group = numpyro.sample(f"sigma_{var}_{group_name}", dist.HalfCauchy(5))
                     z_group_raw = numpyro.sample(f"z_{var}_{group_name}_raw", dist.Normal(0, 1).expand([num_groups]))
                     
-                    if group_name in L_matrices:
+                    if group_name in custom_transforms:
+                        z_group, sigma_group = custom_transforms[group_name]["transform_func"](numpyro, jnp, jax, dist, var, group_name, num_groups, custom_transforms[group_name]["matrix"], z_group_raw, sigma_group, shared_state)
+                    elif group_name in L_matrices:
                         # Correlated errors: z_group = L @ z_group_raw
                         L = L_matrices[group_name]
                         if L.shape[0] != num_groups:

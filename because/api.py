@@ -6,7 +6,15 @@ from numpyro.infer import MCMC, NUTS, Predictive
 import numpyro.diagnostics as diag
 from .builder import FormulaParser, CausalGraph, NumPyroBuilder
 
-def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False, dsep_only=False, calculate_waic=False, num_samples=1000, num_warmup=500, num_chains=1, thinning=1, n_cores=1, seed=0, dsep_max_obs=2000, quiet=False):
+def get_dsep_equations(equations, latent=None):
+    """Helper to return implied d-sep claims without fitting the model."""
+    test_parser = FormulaParser(equations)
+    test_parsed = test_parser.parse()
+    graph = CausalGraph(test_parsed)
+    graph.build()
+    return graph.generate_dsep_equations(latent=latent)
+
+def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False, dsep_only=False, calculate_waic=False, num_samples=1000, num_warmup=500, num_chains=1, thinning=1, n_cores=1, seed=0, dsep_max_obs=2000, quiet=False, dsep_equations_to_run=None):
     """
     High-level API for because-py. Fits a causal hierarchical model using NumPyro.
     
@@ -72,7 +80,12 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
     model_func = compiler.generate_model_function(data_for_compilation=data)
     
     # Convert data to JAX arrays
-    jax_data = {k: jnp.array(v) for k, v in data.items()}
+    jax_data = {}
+    for k, v in data.items():
+        if isinstance(v, dict):
+            jax_data[k] = {vk: jnp.array(vv) for vk, vv in v.items()}
+        else:
+            jax_data[k] = jnp.array(v)
     
     results = {}
     
@@ -83,9 +96,19 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
         import warnings
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message=".*There are not enough devices to run parallel chains.*")
-            mcmc = MCMC(NUTS(model_func), num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains, thinning=thinning, progress_bar=not quiet)
+            from numpyro.infer import DiscreteHMCGibbs
+            kernel_base = NUTS(model_func)
+            kernel_gibbs = DiscreteHMCGibbs(kernel_base)
+            mcmc = MCMC(kernel_gibbs, num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains, thinning=thinning, progress_bar=False)
         
-        mcmc.run(subkey, **jax_data)
+        try:
+            mcmc.run(subkey, **jax_data)
+        except AssertionError as e:
+            if "discrete latent variables" in str(e):
+                mcmc = MCMC(kernel_base, num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains, thinning=thinning, progress_bar=False)
+                mcmc.run(subkey, **jax_data)
+            else:
+                raise
         
         samples = mcmc.get_samples(group_by_chain=True)
         
@@ -111,10 +134,15 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
     if not dsep:
         return results
         
-    # ----------------------------------------------------
     # D-Separation Testing (and M-Separation)
     # ----------------------------------------------------
     dsep_equations = graph.generate_dsep_equations(latent=latent)
+    
+    # Filter if incremental caching is used from R
+    if dsep_equations_to_run is not None:
+        norm_to_run = [" ".join(e.split()) for e in dsep_equations_to_run]
+        dsep_equations = [c for c in dsep_equations if " ".join(c["equation_string"].split()) in norm_to_run]
+
     if not dsep_equations:
         if not quiet:
             print("Graph is fully connected or no testable claims exist. No implied conditional independencies to test.")
@@ -136,7 +164,12 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
         idx = np.random.choice(N_total, size=dsep_max_obs, replace=False)
         dsep_data = {k: v[idx] for k, v in data.items()}
         
-    jax_dsep_data = {k: jnp.array(v) for k, v in dsep_data.items()}
+    jax_dsep_data = {}
+    for k, v in dsep_data.items():
+        if isinstance(v, dict):
+            jax_dsep_data[k] = {vk: jnp.array(vv) for vk, vv in v.items()}
+        else:
+            jax_dsep_data[k] = jnp.array(v)
     
     for i, claim in enumerate(dsep_equations):
         eq_str = claim["equation_string"]
@@ -148,7 +181,13 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
             test_desc = "(Induced Correlation)" if claim_type == "correlation" else "(Conditional Independence)"
             print(f"\n[Test {i+1} / {len(dsep_equations)}]  {eq_str}  {test_desc}")
             
-        test_parser = FormulaParser([eq_str])
+        compile_eq_str = eq_str
+        if cor_matrices:
+            for s_name in cor_matrices.keys():
+                if f"(1|{s_name})" not in compile_eq_str.replace(" ", ""):
+                    compile_eq_str += f" + (1|{s_name})"
+            
+        test_parser = FormulaParser([compile_eq_str])
         test_parsed = test_parser.parse()
         test_graph = CausalGraph(test_parsed, deterministic_terms=deterministic_terms)
         test_graph.build()
@@ -164,8 +203,19 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
         import warnings
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message=".*There are not enough devices to run parallel chains.*")
-            test_mcmc = MCMC(NUTS(test_model_func), num_warmup=num_warmup, num_samples=num_samples, num_chains=dsep_chains, thinning=thinning, progress_bar=False)
-        test_mcmc.run(subkey, **jax_dsep_data)
+            from numpyro.infer import DiscreteHMCGibbs
+            kernel_base = NUTS(test_model_func)
+            kernel_gibbs = DiscreteHMCGibbs(kernel_base)
+            test_mcmc = MCMC(kernel_gibbs, num_warmup=num_warmup, num_samples=num_samples, num_chains=dsep_chains, thinning=thinning, progress_bar=False)
+        
+        try:
+            test_mcmc.run(subkey, **jax_dsep_data)
+        except AssertionError as e:
+            if "discrete latent variables" in str(e):
+                test_mcmc = MCMC(kernel_base, num_warmup=num_warmup, num_samples=num_samples, num_chains=dsep_chains, thinning=thinning, progress_bar=False)
+                test_mcmc.run(subkey, **jax_dsep_data)
+            else:
+                raise
         
         # We need grouped samples for Rhat and neff calculations
         samples_grouped = test_mcmc.get_samples(group_by_chain=True)
