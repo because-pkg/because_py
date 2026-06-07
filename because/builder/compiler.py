@@ -45,6 +45,12 @@ class NumPyroBuilder:
             mat = np.array(mat, dtype=float)
             L_matrices[k] = jax.scipy.linalg.cholesky(mat, lower=True)
         
+        # Check if any custom transform is multiPhylo - affects sampling strategy
+        has_multiPhylo = any(
+            isinstance(v, dict) and v.get("type") == "multiPhylo"
+            for v in cor_mats.values()
+        )
+        
         def numpyro_model(**kwargs):
             data = kwargs.copy()
             import numpyro
@@ -444,8 +450,17 @@ class NumPyroBuilder:
                 else:
                     target_size = obs_data.shape[0] if obs_data is not None else None
                     if target_size is not None:
-                        with numpyro.plate(f"{var}_plate", target_size):
-                            sampled_var = numpyro.sample(var, distribution, obs=obs_data)
+                        if has_multiPhylo:
+                            # Use to_event(1) instead of plate: log_prob reduces to a scalar,
+                            # which is required for DiscreteHMCGibbs exact Gibbs (random_walk=False)
+                            sampled_var = numpyro.sample(
+                                var,
+                                distribution.expand([target_size]).to_event(1),
+                                obs=obs_data
+                            )
+                        else:
+                            with numpyro.plate(f"{var}_plate", target_size):
+                                sampled_var = numpyro.sample(var, distribution, obs=obs_data)
                     else:
                         sampled_var = numpyro.sample(var, distribution, obs=obs_data)
                     

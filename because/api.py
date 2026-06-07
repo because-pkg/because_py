@@ -104,7 +104,7 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
                     else:
                         new_sites[k] = v
                 return new_sites
-            kernel_base = DiscreteHMCGibbs(kernel_base, random_walk=True)
+            kernel_base = DiscreteHMCGibbs(kernel_base)
         mcmc = MCMC(kernel_base, num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains, thinning=thinning, progress_bar=False)
         
         mcmc.run(subkey, **jax_data)
