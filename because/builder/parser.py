@@ -18,6 +18,7 @@ def sanitize_term_name(term):
     out = out.replace("-", "_minus_")
     out = out.replace("*", "_times_")
     out = out.replace("/", "_div_")
+    out = out.replace(" ", "")  # R strips spaces
     
     # Clean up non-alphanumeric chars
     out = re.sub(r'[^a-zA-Z0-9_]', '_', out)
@@ -27,8 +28,6 @@ def sanitize_term_name(term):
     if len(out) > 32:
         checksum = hashlib.md5(term.encode()).hexdigest()[:6]
         out = f"det_{out[:20]}_{checksum}"
-    else:
-        out = f"det_{out}"
         
     return out
 

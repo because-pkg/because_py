@@ -1,8 +1,9 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpyro
 import numpyro.distributions as dist
-from numpyro.infer import MCMC, NUTS, Predictive
+from numpyro.infer import MCMC, NUTS, Predictive, DiscreteHMCGibbs
 import numpyro.diagnostics as diag
 from .builder import FormulaParser, CausalGraph, NumPyroBuilder
 
@@ -14,7 +15,7 @@ def get_dsep_equations(equations, latent=None):
     graph.build()
     return graph.generate_dsep_equations(latent=latent)
 
-def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False, dsep_only=False, calculate_waic=False, num_samples=1000, num_warmup=500, num_chains=1, thinning=1, n_cores=1, seed=0, dsep_max_obs=2000, quiet=False, dsep_equations_to_run=None, adapt_delta=0.95):
+def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False, dsep_only=False, calculate_waic=False, num_samples=1000, num_warmup=500, num_chains=1, thinning=1, n_cores=1, seed=0, dsep_max_obs=2000, quiet=False, dsep_equations_to_run=None, adapt_delta=0.95, fix_latent="loading"):
     """
     High-level API for because-py. Fits a causal hierarchical model using NumPyro.
     
@@ -49,9 +50,8 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
     deterministic_terms = parser.deterministic_terms
     
     # Auto-detect latents: variables in equations but not in data
-    if n_cores > 1:
+    if hasattr(jax, "local_device_count") and jax.local_device_count() < n_cores:
         try:
-            import numpyro
             numpyro.set_host_device_count(n_cores)
         except Exception as e:
             if not quiet:
@@ -76,7 +76,7 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
         print(f"   Unobserved stochastic nodes: {unobserved}")
         print("\nInitializing model")
         
-    compiler = NumPyroBuilder(graph, family_dict=family, deterministic_terms=deterministic_terms, cor_matrices=cor_matrices)
+    compiler = NumPyroBuilder(graph, family_dict=family, deterministic_terms=deterministic_terms, cor_matrices=cor_matrices, fix_latent=fix_latent)
     model_func = compiler.generate_model_function(data_for_compilation=data)
     
     # Convert data to JAX arrays
@@ -93,7 +93,18 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
         rng_key = jax.random.PRNGKey(seed)
         rng_key, subkey = jax.random.split(rng_key)
         
-        kernel_base = NUTS(model_func, target_accept_prob=adapt_delta)
+        kernel_base = NUTS(model_func, target_accept_prob=adapt_delta, init_strategy=numpyro.infer.init_to_sample())
+        if cor_matrices and any(v.get("type") == "multiPhylo" for v in cor_matrices.values()):
+            n_trees = int(jax_data.get("Ntree", 10))
+            def rw_fn(rng_key, discrete_sites):
+                new_sites = {}
+                for k, v in discrete_sites.items():
+                    if k.startswith("K_tree"):
+                        new_sites[k] = jax.random.randint(rng_key, shape=jnp.shape(v), minval=0, maxval=n_trees)
+                    else:
+                        new_sites[k] = v
+                return new_sites
+            kernel_base = DiscreteHMCGibbs(kernel_base, random_walk=True)
         mcmc = MCMC(kernel_base, num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains, thinning=thinning, progress_bar=False)
         
         mcmc.run(subkey, **jax_data)
@@ -180,7 +191,7 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
         test_graph = CausalGraph(test_parsed, deterministic_terms=deterministic_terms)
         test_graph.build()
         
-        test_compiler = NumPyroBuilder(test_graph, family_dict=family, deterministic_terms=deterministic_terms, cor_matrices=cor_matrices)
+        test_compiler = NumPyroBuilder(test_graph, family_dict=family, deterministic_terms=deterministic_terms, cor_matrices=cor_matrices, fix_latent=fix_latent)
         test_model_func = test_compiler.generate_model_function(data_for_compilation=dsep_data)
         
         rng_key, subkey = jax.random.split(rng_key)
@@ -188,7 +199,18 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
         # We run MCMC for the dsep test using the same parameters as the main model
         # To get valid Rhat, we enforce at least 2 chains if the user requested less than 2
         dsep_chains = max(2, num_chains)
-        kernel_base = NUTS(test_model_func, target_accept_prob=adapt_delta)
+        kernel_base = NUTS(test_model_func, target_accept_prob=adapt_delta, init_strategy=numpyro.infer.init_to_sample())
+        if cor_matrices and any(v.get("type") == "multiPhylo" for v in cor_matrices.values()):
+            n_trees = int(jax_dsep_data.get("Ntree", 10))
+            def rw_fn_dsep(rng_key, discrete_sites):
+                new_sites = {}
+                for k, v in discrete_sites.items():
+                    if k.startswith("K_tree"):
+                        new_sites[k] = jax.random.randint(rng_key, shape=jnp.shape(v), minval=0, maxval=n_trees)
+                    else:
+                        new_sites[k] = v
+                return new_sites
+            kernel_base = DiscreteHMCGibbs(kernel_base, random_walk_fn=rw_fn_dsep)
         test_mcmc = MCMC(kernel_base, num_warmup=num_warmup, num_samples=num_samples, num_chains=dsep_chains, thinning=thinning, progress_bar=False)
         
         test_mcmc.run(subkey, **jax_dsep_data)
@@ -237,58 +259,60 @@ def _calculate_waic_internal(model_func, mcmc, jax_data):
     """
     Calculates WAIC (Widely Applicable Information Criterion) with standard errors
     using pointwise log-likelihoods.
-    
-    Ported from because_waic.R
+
+    Handles multi-scale hierarchical models where different response variables
+    may have different numbers of observations (e.g. Abundance N=4500, Body_Mass_s N=50).
+    Each variable's pointwise log-likelihoods are kept separate and only combined
+    at the total-WAIC level, so shapes never need to broadcast.
     """
     from numpyro.infer import log_likelihood
     import numpy as np
     from scipy.special import logsumexp
-    
+
     # Get log likelihoods for all observed sites
     log_lik_dict = log_likelihood(model_func, mcmc.get_samples(), **jax_data)
-    
-    # Flatten across all endogenous variables to get a joint WAIC
-    joint_ll = None
-    for k, ll in log_lik_dict.items():
-        if joint_ll is None:
-            joint_ll = np.array(ll)
-        else:
-            joint_ll += np.array(ll)
-            
-    if joint_ll is None:
+
+    if not log_lik_dict:
         return None
-        
-    n_samples, n_obs = joint_ll.shape
-    
-    # 1. Compute lpd (log pointwise predictive density)
-    lpd_i = logsumexp(joint_ll, axis=0) - np.log(n_samples)
-    
-    # 2. Compute p_waic (effective number of parameters)
-    p_waic_i = np.var(joint_ll, axis=0, ddof=1)
-    
-    # 3. Compute pointwise WAIC
-    elpd_waic_i = lpd_i - p_waic_i
-    waic_i = -2 * elpd_waic_i
-    
-    # Totals
-    elpd_waic = np.sum(elpd_waic_i)
-    p_waic = np.sum(p_waic_i)
-    waic = np.sum(waic_i)
-    
-    # Standard Errors
-    se_elpd_waic = np.sqrt(n_obs * np.var(elpd_waic_i, ddof=1))
-    se_p_waic = np.sqrt(n_obs * np.var(p_waic_i, ddof=1))
-    se_waic = np.sqrt(n_obs * np.var(waic_i, ddof=1))
-    
+
+    # Accumulate pointwise WAIC components per variable, then sum across variables.
+    # Each ll has shape (n_samples, n_obs_for_this_variable).
+    # We keep them separate to avoid shape-mismatch in multi-scale models.
+    total_elpd_waic = 0.0
+    total_p_waic    = 0.0
+    total_waic      = 0.0
+    total_n_obs     = 0
+    se_sq_elpd      = 0.0
+    se_sq_p         = 0.0
+    se_sq_waic      = 0.0
+
+    for k, ll in log_lik_dict.items():
+        ll_np = np.array(ll)          # shape: (n_samples, n_obs_k)
+        n_samples, n_obs_k = ll_np.shape
+
+        # lpd per observation
+        lpd_i      = logsumexp(ll_np, axis=0) - np.log(n_samples)
+        # effective params per observation
+        p_waic_i   = np.var(ll_np, axis=0, ddof=1)
+        # elpd and waic per observation
+        elpd_i     = lpd_i - p_waic_i
+        waic_i     = -2.0 * elpd_i
+
+        total_elpd_waic += float(np.sum(elpd_i))
+        total_p_waic    += float(np.sum(p_waic_i))
+        total_waic      += float(np.sum(waic_i))
+
+        # SE contributions (each variable contributes independently)
+        se_sq_elpd  += n_obs_k * float(np.var(elpd_i,   ddof=1))
+        se_sq_p     += n_obs_k * float(np.var(p_waic_i, ddof=1))
+        se_sq_waic  += n_obs_k * float(np.var(waic_i,   ddof=1))
+        total_n_obs += n_obs_k
+
     return {
-        "elpd_waic": {"Estimate": float(elpd_waic), "SE": float(se_elpd_waic)},
-        "p_waic": {"Estimate": float(p_waic), "SE": float(se_p_waic)},
-        "waic": {"Estimate": float(waic), "SE": float(se_waic)},
-        "n_obs": n_obs,
+        "elpd_waic": {"Estimate": total_elpd_waic,       "SE": float(np.sqrt(se_sq_elpd))},
+        "p_waic":    {"Estimate": total_p_waic,           "SE": float(np.sqrt(se_sq_p))},
+        "waic":      {"Estimate": total_waic,             "SE": float(np.sqrt(se_sq_waic))},
+        "n_obs":     total_n_obs,
         "n_samples": n_samples,
-        "pointwise": {
-            "elpd_waic_i": elpd_waic_i,
-            "p_waic_i": p_waic_i,
-            "waic_i": waic_i
-        }
     }
+
