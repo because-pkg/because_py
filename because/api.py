@@ -124,7 +124,17 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
         if calculate_waic:
             if not quiet:
                 print("Calculating WAIC...")
-            results["waic"] = _calculate_waic_internal(model_func, mcmc, jax_data)
+            
+            # For multiPhylo, the exact Gibbs kernel requires `.to_event(1)` on the observation sites,
+            # which collapses the log-likelihood to a scalar per chain/sample, preventing pointwise WAIC calculation.
+            # We must rebuild the model using standard `numpyro.plate` specifically for WAIC evaluation.
+            has_multiPhylo = cor_matrices and any(v.get("type") == "multiPhylo" for v in cor_matrices.values())
+            if has_multiPhylo:
+                waic_model_func = compiler.generate_model_function(data_for_compilation=data, force_plate_obs=True)
+            else:
+                waic_model_func = model_func
+                
+            results["waic"] = _calculate_waic_internal(waic_model_func, mcmc, jax_data)
             
     else:
         # We just need a dummy rng key

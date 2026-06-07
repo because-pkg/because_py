@@ -20,10 +20,11 @@ class NumPyroBuilder:
         self.fix_latent = fix_latent
         self.pinned_latents = set()
 
-    def generate_model_function(self, data_for_compilation=None):
+    def generate_model_function(self, data_for_compilation=None, force_plate_obs=False):
         """
         Returns a callable python function representing the NumPyro model.
         :param data_for_compilation: Optional dict of the data to statically optimize the JAX trace (e.g. for NaN masking).
+        :param force_plate_obs: If True, forces the use of numpyro.plate for observations even if multiPhylo is detected. Used for WAIC calculation.
         """
         topo_order = self.graph.get_topological_order()
         # self.parsed_equations is already a dict mapping response -> parsed dict
@@ -450,7 +451,7 @@ class NumPyroBuilder:
                 else:
                     target_size = obs_data.shape[0] if obs_data is not None else None
                     if target_size is not None:
-                        if has_multiPhylo:
+                        if has_multiPhylo and not force_plate_obs:
                             # Use to_event(1) instead of plate: log_prob reduces to a scalar,
                             # which is required for DiscreteHMCGibbs exact Gibbs (random_walk=False)
                             sampled_var = numpyro.sample(
