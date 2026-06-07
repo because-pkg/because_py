@@ -14,7 +14,7 @@ def get_dsep_equations(equations, latent=None):
     graph.build()
     return graph.generate_dsep_equations(latent=latent)
 
-def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False, dsep_only=False, calculate_waic=False, num_samples=1000, num_warmup=500, num_chains=1, thinning=1, n_cores=1, seed=0, dsep_max_obs=2000, quiet=False, dsep_equations_to_run=None):
+def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False, dsep_only=False, calculate_waic=False, num_samples=1000, num_warmup=500, num_chains=1, thinning=1, n_cores=1, seed=0, dsep_max_obs=2000, quiet=False, dsep_equations_to_run=None, adapt_delta=0.95):
     """
     High-level API for because-py. Fits a causal hierarchical model using NumPyro.
     
@@ -93,22 +93,10 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
         rng_key = jax.random.PRNGKey(seed)
         rng_key, subkey = jax.random.split(rng_key)
         
-        import warnings
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message=".*There are not enough devices to run parallel chains.*")
-            from numpyro.infer import DiscreteHMCGibbs
-            kernel_base = NUTS(model_func)
-            kernel_gibbs = DiscreteHMCGibbs(kernel_base)
-            mcmc = MCMC(kernel_gibbs, num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains, thinning=thinning, progress_bar=False)
+        kernel_base = NUTS(model_func, target_accept_prob=adapt_delta)
+        mcmc = MCMC(kernel_base, num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains, thinning=thinning, progress_bar=False)
         
-        try:
-            mcmc.run(subkey, **jax_data)
-        except AssertionError as e:
-            if "discrete latent variables" in str(e):
-                mcmc = MCMC(kernel_base, num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains, thinning=thinning, progress_bar=False)
-                mcmc.run(subkey, **jax_data)
-            else:
-                raise
+        mcmc.run(subkey, **jax_data)
         
         samples = mcmc.get_samples(group_by_chain=True)
         
@@ -200,22 +188,10 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
         # We run MCMC for the dsep test using the same parameters as the main model
         # To get valid Rhat, we enforce at least 2 chains if the user requested less than 2
         dsep_chains = max(2, num_chains)
-        import warnings
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message=".*There are not enough devices to run parallel chains.*")
-            from numpyro.infer import DiscreteHMCGibbs
-            kernel_base = NUTS(test_model_func)
-            kernel_gibbs = DiscreteHMCGibbs(kernel_base)
-            test_mcmc = MCMC(kernel_gibbs, num_warmup=num_warmup, num_samples=num_samples, num_chains=dsep_chains, thinning=thinning, progress_bar=False)
+        kernel_base = NUTS(test_model_func, target_accept_prob=adapt_delta)
+        test_mcmc = MCMC(kernel_base, num_warmup=num_warmup, num_samples=num_samples, num_chains=dsep_chains, thinning=thinning, progress_bar=False)
         
-        try:
-            test_mcmc.run(subkey, **jax_dsep_data)
-        except AssertionError as e:
-            if "discrete latent variables" in str(e):
-                test_mcmc = MCMC(kernel_base, num_warmup=num_warmup, num_samples=num_samples, num_chains=dsep_chains, thinning=thinning, progress_bar=False)
-                test_mcmc.run(subkey, **jax_dsep_data)
-            else:
-                raise
+        test_mcmc.run(subkey, **jax_dsep_data)
         
         # We need grouped samples for Rhat and neff calculations
         samples_grouped = test_mcmc.get_samples(group_by_chain=True)

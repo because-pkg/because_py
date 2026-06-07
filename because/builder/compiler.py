@@ -60,8 +60,71 @@ class NumPyroBuilder:
                 # 1. Deterministic Node Evaluation
                 if var in det_terms:
                     expr = det_terms[var]["expression"]
-                    # Safely evaluate using computed variables
-                    computed_vars[var] = eval(expr, {"jnp": jnp, "np": np}, computed_vars)
+                    print(f"DEBUG Deterministic: Evaluating {var} -> {expr}")
+                    target_size = None
+                    if f"N_{var}" in data:
+                        target_size = int(data[f"N_{var}"])
+                    else:
+                        # Find the parent node that uses this deterministic term
+                        for p_var, eq in equations_dict.items():
+                            if var in eq.get("fixed", []) or var in eq.get("random", []):
+                                if p_var in data:
+                                    target_size = data[p_var].shape[0]
+                                elif f"N_{p_var}" in data:
+                                    target_size = int(data[f"N_{p_var}"])
+                                break
+                    
+                    if target_size is not None:
+                        import ast
+                        used_vars = [node.id for node in ast.walk(ast.parse(expr)) if isinstance(node, ast.Name)]
+                        used_vars = [v for v in used_vars if v in computed_vars]
+                        
+                        local_vars = dict(computed_vars)
+                        for v in used_vars:
+                            v_data = computed_vars[v]
+                            if hasattr(v_data, "shape") and len(v_data.shape) > 0 and v_data.shape[0] < target_size:
+                                v_size = v_data.shape[0]
+                                
+                                # Robust index finding for criss-crossing hierarchies
+                                # We need an index array of length target_size with max value < v_size.
+                                # To disambiguate, we find the level names.
+                                def get_level_name(size):
+                                    candidates = []
+                                    for k, val in data.items():
+                                        if k.startswith("N_") and int(val) == size:
+                                            lname = k[2:]
+                                            if not lname.isupper() and "ID" not in lname and "_id" not in lname:
+                                                candidates.append(lname)
+                                    return candidates
+                                
+                                source_levels = get_level_name(v_size)
+                                target_levels = get_level_name(target_size)
+                                
+                                idx_array = None
+                                for s in source_levels:
+                                    for t in target_levels:
+                                        idx_name = f"{s}_idx_{t}"
+                                        if idx_name in data:
+                                            idx_array = data[idx_name]
+                                            break
+                                    if idx_array is not None: break
+                                
+                                if idx_array is None:
+                                    # Fallback: any valid index array
+                                    for k, val in data.items():
+                                        if "idx" in k and hasattr(val, "shape") and len(val.shape) > 0 and val.shape[0] == target_size:
+                                            if jnp.max(val) < v_size:
+                                                idx_array = val
+                                                break
+                                                
+                                if idx_array is not None:
+                                    local_vars[v] = v_data[idx_array]
+                                else:
+                                    raise ValueError(f"Shape mismatch in deterministic node {var}: {v} ({v_size}) vs target ({target_size}). No bridging index found.")
+                        
+                        computed_vars[var] = eval(expr, {"jnp": jnp, "np": np}, local_vars)
+                    else:
+                        computed_vars[var] = eval(expr, {"jnp": jnp, "np": np}, computed_vars)
                     continue
                 
                 # (Old exogenous handling block removed)
@@ -109,27 +172,62 @@ class NumPyroBuilder:
                     
                     if pred_data.shape[0] != target_size:
                         max_len = max(pred_data.shape[0], target_size)
-                        idx_name_1 = f"idx_{pred}"
-                        idx_array = data.get(idx_name_1)
-                        if idx_array is None or idx_array.shape[0] != max_len:
-                            possible_idx = [k for k, v in data.items() if k.startswith("idx_") and v.shape[0] == max_len]
-                            if not possible_idx:
-                                raise ValueError(f"Shape mismatch: {var} ({target_size}) vs {pred} ({pred_data.shape[0]}). No bridging index found of length {max_len}.")
-                            idx_array = data[possible_idx[0]]
+                        min_len = min(pred_data.shape[0], target_size)
+                        
+                        def get_level_name(size):
+                            candidates = []
+                            for k, val in data.items():
+                                if k.startswith("N_") and int(val) == size:
+                                    lname = k[2:]
+                                    if not lname.isupper() and "ID" not in lname and "_id" not in lname:
+                                        candidates.append(lname)
+                            return candidates
+                            
+                        source_levels = get_level_name(min_len)
+                        target_levels = get_level_name(max_len)
+                        
+                        idx_array = None
+                        for s in source_levels:
+                            for t in target_levels:
+                                idx_name = f"{s}_idx_{t}"
+                                if idx_name in data:
+                                    idx_array = data[idx_name]
+                                    idx_name_for_print = idx_name
+                                    break
+                            if idx_array is not None: break
+                            
+                        if idx_array is None:
+                            idx_name_1 = f"idx_{pred}"
+                            idx_array = data.get(idx_name_1)
+                            idx_name_for_print = idx_name_1
+                            if idx_array is None or idx_array.shape[0] != max_len:
+                                possible_idx = [k for k, val in data.items() if k.startswith("idx_") and hasattr(val, "shape") and len(val.shape) > 0 and val.shape[0] == max_len and jnp.max(val) < min_len]
+                                if not possible_idx:
+                                    possible_idx = [k for k, val in data.items() if "idx" in k and hasattr(val, "shape") and len(val.shape) > 0 and val.shape[0] == max_len and jnp.max(val) < min_len]
+                                    if not possible_idx:
+                                        raise ValueError(f"Shape mismatch: {var} ({target_size}) vs {pred} ({pred_data.shape[0]}). No bridging index found of length {max_len}.")
+                                idx_array = data[possible_idx[0]]
+                                idx_name_for_print = possible_idx[0]
                         
                         if pred_data.shape[0] < target_size:
                             # COARSE predictor -> FINE response (Broadcasting)
+                            print(f"DEBUG Fixed: {var}({target_size}) ~ {pred}({pred_data.shape[0]}) using {idx_name_for_print}")
                             mu = mu + beta * pred_data[idx_array]
                         else:
                             # FINE predictor -> COARSE response (Resolution Locking)
                             import jax
+                            print(f"DEBUG Fixed Locking: {var}({target_size}) ~ {pred}({pred_data.shape[0]}) using {idx_name_for_print}")
                             sum_pred = jax.ops.segment_sum(pred_data, idx_array, num_segments=target_size)
                             count = jax.ops.segment_sum(jnp.ones_like(pred_data), idx_array, num_segments=target_size)
                             mean_pred = sum_pred / jnp.where(count > 0, count, 1.0)
                             mu = mu + beta * mean_pred
                     else:
+                        print(f"DEBUG Fixed Match: {var}({target_size}) ~ {pred}({pred_data.shape[0]})")
                         mu = mu + beta * pred_data
                     
+                # Dictionary to store structural standard deviations for lambda calculation
+                sigma_struct_dict = {}
+                
                 for rand_term in eq["random"]:
                     import re
                     match = re.search(r"\(1\s*\|\s*([^)]+)\)", rand_term)
@@ -152,10 +250,11 @@ class NumPyroBuilder:
                                 f"during JAX compilation. Please provide '{n_var}' as an integer in your data dictionary."
                             )
                     
-                    sigma_group = numpyro.sample(f"sigma_{var}_{group_name}", dist.HalfCauchy(5))
+                    sigma_group = numpyro.sample(f"sigma_{var}_{group_name}", dist.HalfNormal(5))
                     z_group_raw = numpyro.sample(f"z_{var}_{group_name}_raw", dist.Normal(0, 1).expand([num_groups]))
                     
                     if group_name in custom_transforms:
+                        print(f"DEBUG Custom Transform: {var}({target_size}) | {group_name}({num_groups})")
                         z_group, sigma_group = custom_transforms[group_name]["transform_func"](numpyro, jnp, jax, dist, var, group_name, num_groups, custom_transforms[group_name]["matrix"], z_group_raw, sigma_group, shared_state)
                     elif group_name in L_matrices:
                         # Correlated errors: z_group = L @ z_group_raw
@@ -173,11 +272,19 @@ class NumPyroBuilder:
                         
                     u_group = numpyro.deterministic(f"u_{var}_{group_name}", z_group * sigma_group)
                     mu = mu + u_group[group_idx]
+                    
+                    # Store for lambda calculation
+                    if group_name in custom_transforms or group_name in L_matrices:
+                        sigma_struct_dict[group_name] = sigma_group
                 
                 # --- Distribution Dispatcher ---
                 if family == "gaussian":
-                    sigma = numpyro.sample(f"sigma_{var}", dist.HalfCauchy(5))
+                    sigma = numpyro.sample(f"sigma_{var}", dist.HalfNormal(5))
                     distribution = dist.Normal(mu, sigma)
+                    
+                    # Post-hoc calculate Pagel's lambda for any structural/phylogenetic random effects
+                    for g_name, sig_g in sigma_struct_dict.items():
+                        numpyro.deterministic(f"lambda_{var}_{g_name}", (sig_g**2) / (sig_g**2 + sigma**2))
                 elif family == "poisson":
                     distribution = dist.Poisson(rate=jnp.exp(mu))
                 elif family == "binomial":
