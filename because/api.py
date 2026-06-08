@@ -212,15 +212,7 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
         kernel_base = NUTS(test_model_func, target_accept_prob=adapt_delta, init_strategy=numpyro.infer.init_to_sample())
         if cor_matrices and any(v.get("type") == "multiPhylo" for v in cor_matrices.values()):
             n_trees = int(jax_dsep_data.get("Ntree", 10))
-            def rw_fn_dsep(rng_key, discrete_sites):
-                new_sites = {}
-                for k, v in discrete_sites.items():
-                    if k.startswith("K_tree"):
-                        new_sites[k] = jax.random.randint(rng_key, shape=jnp.shape(v), minval=0, maxval=n_trees)
-                    else:
-                        new_sites[k] = v
-                return new_sites
-            kernel_base = DiscreteHMCGibbs(kernel_base, random_walk_fn=rw_fn_dsep)
+            kernel_base = DiscreteHMCGibbs(kernel_base)
         test_mcmc = MCMC(kernel_base, num_warmup=num_warmup, num_samples=num_samples, num_chains=dsep_chains, thinning=thinning, progress_bar=False)
         
         test_mcmc.run(subkey, **jax_dsep_data)
@@ -274,13 +266,54 @@ def _calculate_waic_internal(model_func, mcmc, jax_data):
     may have different numbers of observations (e.g. Abundance N=4500, Body_Mass_s N=50).
     Each variable's pointwise log-likelihoods are kept separate and only combined
     at the total-WAIC level, so shapes never need to broadcast.
+
+    For multiPhylo models, uses Rao-Blackwellization: for each MCMC sample of
+    continuous parameters, the log-likelihood is averaged over ALL trees (with
+    equal weight = 1/T). This removes the artificial variance in p_waic that would
+    result from K_tree jumping between trees across samples.
     """
     from numpyro.infer import log_likelihood
     import numpy as np
     from scipy.special import logsumexp
+    import jax.numpy as jnp
 
-    # Get log likelihoods for all observed sites
-    log_lik_dict = log_likelihood(model_func, mcmc.get_samples(), **jax_data)
+    flat_samples = mcmc.get_samples()
+
+    # Detect multiPhylo: K_tree variables present in samples
+    k_tree_keys = [k for k in flat_samples.keys() if k.startswith("K_tree")]
+    has_multi_phylo = len(k_tree_keys) > 0
+    print(f"[WAIC debug] K_tree keys found: {k_tree_keys}, has_multi_phylo={has_multi_phylo}")
+
+    if has_multi_phylo:
+        # Determine number of trees from jax_data
+        n_trees = int(jax_data.get("Ntree", max(int(v.max()) + 1
+                                                 for v in (np.array(flat_samples[k])
+                                                           for k in k_tree_keys))))
+
+        # Rao-Blackwellized WAIC:
+        # For each continuous parameter sample s, compute:
+        #   LL_RB[i, s] = log(1/T * sum_k exp(log p(y_i | theta_s, z_s, K=k)))
+        # This marginalizes the discrete tree index with uniform weights,
+        # removing the artificial variance from K_tree jumping across samples.
+        ll_per_tree = []  # list of dicts: {var: array(n_samples, n_obs)}
+        for k in range(n_trees):
+            fixed_samples = {
+                key: (jnp.full_like(val, k) if key in k_tree_keys else val)
+                for key, val in flat_samples.items()
+            }
+            ll_k = log_likelihood(model_func, fixed_samples, **jax_data)
+            ll_per_tree.append({var: np.array(v) for var, v in ll_k.items()})
+
+        # Stack and marginalize: log_mean_exp over trees (axis=0)
+        log_lik_dict = {}
+        for var_name in ll_per_tree[0].keys():
+            # shape: (n_trees, n_samples, n_obs)
+            ll_stack = np.stack([ll_per_tree[k][var_name] for k in range(n_trees)], axis=0)
+            # Marginalize: log(1/T * sum_k exp(ll)): shape (n_samples, n_obs)
+            log_lik_dict[var_name] = logsumexp(ll_stack, axis=0) - np.log(n_trees)
+    else:
+        # Standard (non-multiPhylo) WAIC: use all samples directly
+        log_lik_dict = log_likelihood(model_func, flat_samples, **jax_data)
 
     if not log_lik_dict:
         return None
@@ -296,6 +329,7 @@ def _calculate_waic_internal(model_func, mcmc, jax_data):
     se_sq_p         = 0.0
     se_sq_waic      = 0.0
 
+    n_samples = None
     for k, ll in log_lik_dict.items():
         ll_np = np.array(ll)          # shape: (n_samples, n_obs_k)
         n_samples, n_obs_k = ll_np.shape
