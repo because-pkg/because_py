@@ -1,3 +1,4 @@
+import warnings
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -110,7 +111,9 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
                         new_sites[k] = v
                 return new_sites
             kernel_base = DiscreteHMCGibbs(kernel_base)
-        mcmc = MCMC(kernel_base, num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains, thinning=thinning, progress_bar=False)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="There are not enough devices")
+            mcmc = MCMC(kernel_base, num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains, thinning=thinning, progress_bar=False)
         
         mcmc.run(subkey, **jax_data)
         
@@ -430,4 +433,72 @@ def summary(result, digits=3):
         })
 
     df = pd.DataFrame(rows).set_index("parameter")
+    return df
+
+
+def dsep_summary(result, digits=3, verbose=False):
+    """
+    Print a summary table of d-separation test results from a because.fit() call.
+
+    Each row represents one implied conditional independence claim from the
+    minimum basis set.  A claim **passes** when the 95% posterior interval of
+    the test coefficient includes zero (i.e. the two variables are conditionally
+    independent given the conditioning set).
+
+    :param result: Dictionary returned by :func:`fit` with ``dsep=True``.
+    :param digits: Number of decimal places to display (default 3).
+    :param verbose: If ``True``, prints a one-line pass/fail verdict above the
+        table (default ``False``).
+    :return: A ``pandas.DataFrame`` with one row per d-sep claim.
+
+    Example::
+
+        import because
+        result = because.fit(
+            equations   = ["Brain ~ Mass", "Lifespan ~ Brain"],
+            data        = data_dict,
+            dsep        = True,
+            dsep_only   = True,
+            num_samples = 1000
+        )
+        print(because.dsep_summary(result))                    # table only
+        print(because.dsep_summary(result, verbose=True))     # verdict + table
+    """
+    try:
+        import pandas as pd
+    except ImportError:
+        raise ImportError(
+            "pandas is required for because.dsep_summary(). "
+            "Install it with: pip install pandas"
+        )
+
+    tests = result.get("dsep_results")
+    if tests is None:
+        raise ValueError(
+            "result['dsep_results'] not found. "
+            "Make sure fit() was called with dsep=True."
+        )
+
+    rows = []
+    for t in tests:
+        rows.append({
+            "claim":       t["claim"],
+            "coefficient": t["coefficient"],
+            "mean":        round(t["mean"],    digits),
+            "2.5%":        round(t["ci_2.5"],  digits),
+            "97.5%":       round(t["ci_97.5"], digits),
+            "result":      "PASS" if t["is_independent"] else "FAIL",
+            "Rhat":        round(t["rhat"],    digits),
+            "n_eff":       round(t["n_eff"],   1),
+        })
+
+    df = pd.DataFrame(rows).set_index("claim")
+
+    if verbose:
+        n_pass  = sum(1 for t in tests if t["is_independent"])
+        n_total = len(tests)
+        verdict = "Model is consistent with the data." if n_pass == n_total \
+                  else "One or more independence claims FAILED — consider revising the DAG."
+        print(f"D-separation tests: {n_pass}/{n_total} passed. {verdict}\n")
+
     return df
