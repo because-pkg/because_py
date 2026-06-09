@@ -80,10 +80,10 @@ result = because.fit(
 ## Documentation
 
 Full documentation including articles and API reference:
-**[because-pkg.github.io/because_py](https://because-pkg.github.io/because_py/)**
+**[because-pkg.github.io/because_py/](https://because-pkg.github.io/because_py/)**
 
 For the R package documentation:
-**[because-pkg.github.io/because](https://because-pkg.github.io/because/)**
+**[because-pkg.github.io](https://because-pkg.github.io)**
 
 ---
 
