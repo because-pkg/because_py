@@ -42,13 +42,6 @@
     "text": "because-py is the Python NumPyro backend for the R because package. It can be used from R (the recommended approach) or directly in Python."
   },
   {
-    "objectID": "articles/installation.html#prerequisites",
-    "href": "articles/installation.html#prerequisites",
-    "title": "Installation & Setup",
-    "section": "",
-    "text": "because-py requires Python ≥ 3.8 and the following dependencies, which are installed automatically:\n\nJAX + jaxlib\nNumPyro\nNumPy"
-  },
-  {
     "objectID": "articles/installation.html#installing-because-py",
     "href": "articles/installation.html#installing-because-py",
     "title": "Installation & Setup",
@@ -56,25 +49,18 @@
     "text": "because-py is the Python NumPyro backend for the R because package. It can be used from R (the recommended approach) or directly in Python."
   },
   {
-    "objectID": "articles/installation.html#using-because-py-from-r",
-    "href": "articles/installation.html#using-because-py-from-r",
+    "objectID": "articles/installation.html#from-r-recommended",
+    "href": "articles/installation.html#from-r-recommended",
     "title": "Installation & Setup",
-    "section": "Using because-py from R",
-    "text": "Using because-py from R\nbecause-py is designed to be called from R via the because package using reticulate.\n\nStep 1 — Install the R packages\ninstall.packages(\"because\")       # from CRAN\ninstall.packages(\"reticulate\")    # if not already installed\n\n\nStep 2 — Set up a Python environment\nlibrary(reticulate)\n\n# Create a dedicated conda environment (recommended)\nconda_create(\"because-env\", python_version = \"3.11\")\nuse_condaenv(\"because-env\")\n\n# Or use a virtualenv\nvirtualenv_create(\"because-env\")\nuse_virtualenv(\"because-env\")\n\n\nStep 3 — Install because-py and JAX into that environment\npy_install(\"because_py\", pip = TRUE)\npy_install(c(\"jax\", \"jaxlib\"), pip = TRUE)\n\n\nStep 4 — Verify\nlibrary(because)\nreticulate::py_config()   # should show your because-env Python\nThen run any because() call with engine = \"numpyro\":\nfit &lt;- because(\n  equations = list(y ~ x),\n  data      = mydata,\n  engine    = \"numpyro\",\n  n.iter    = 2000\n)"
+    "section": "From R (recommended)",
+    "text": "From R (recommended)\n\nStep 1 — Install the because R package\n# Stable release\nremotes::install_github(\"because-pkg/because@v1.3.0\", build_vignettes = TRUE)\n\n# Latest development version\nremotes::install_github(\"because-pkg/because\", build_vignettes = TRUE)\n\n\nStep 2 — Install reticulate\ninstall.packages(\"reticulate\")\n\n\nStep 3 — Install Python (if needed)\nIf you do not already have Python on your system, reticulate can install Miniconda for you (skip this if Python is already installed):\nreticulate::install_miniconda()\n\n\nStep 4 — One-step setup\nbecause provides a built-in helper that installs all required Python packages (numpyro, jax, jaxlib, networkx, funsor, and because_py) into your active Python environment:\ninstall_because_numpyro()\nThe function automatically detects your active Python environment — including RStudio project-level virtual environments (.venv) and any existing reticulate configuration — falling back to \"r-reticulate\" if none is found.\n\n\nTroubleshooting: wrong Python environment\nIf in a fresh R session reticulate picks up a different Python environment than the one where the packages were installed, because will throw:\nError: Failed to import python module 'because.api'.\nPython is currently running from: /path/to/wrong/python\nEnsure because_py is installed in this exact environment.\nTry running: install_because_numpyro()\nIn this case, point reticulate to the correct environment before calling because():\nreticulate::use_virtualenv(\"r-reticulate\", required = TRUE)"
   },
   {
-    "objectID": "articles/installation.html#jax-configuration",
-    "href": "articles/installation.html#jax-configuration",
+    "objectID": "articles/installation.html#directly-in-python",
+    "href": "articles/installation.html#directly-in-python",
     "title": "Installation & Setup",
-    "section": "JAX configuration",
-    "text": "JAX configuration\n\nCPU (default)\nNo extra configuration needed.\n\n\nGPU (NVIDIA)\npip install --upgrade \"jax[cuda12_pip]\" \\\n  -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html\n\n\nApple Silicon (M-series)\npip install jax-metal"
-  },
-  {
-    "objectID": "articles/installation.html#troubleshooting",
-    "href": "articles/installation.html#troubleshooting",
-    "title": "Installation & Setup",
-    "section": "Troubleshooting",
-    "text": "Troubleshooting\nImportError: cannot import name 'because' Make sure reticulate is pointing to the Python environment where because_py is installed:\nreticulate::use_condaenv(\"because-env\", required = TRUE)\nJAX initialization errors on macOS Try setting the platform explicitly:\nimport jax\njax.config.update(\"jax_platform_name\", \"cpu\")\nor from R before loading the package:\nSys.setenv(JAX_PLATFORMS = \"cpu\")"
+    "section": "Directly in Python",
+    "text": "Directly in Python\npip install because_py\nOr from source:\ngit clone https://github.com/because-pkg/because_py.git\ncd because_py\npip install -e ."
   },
   {
     "objectID": "articles/reticulate_usage.html",
@@ -158,14 +144,14 @@
     "href": "articles/python_usage.html#basic-usage",
     "title": "Using because-py directly in Python",
     "section": "Basic usage",
-    "text": "Basic usage\nimport numpy as np\nimport because\n\n# Simulate some data\nrng = np.random.default_rng(42)\nn   = 200\nx   = rng.normal(size=n)\ny   = 0.7 * x + rng.normal(size=n)\n\nresult = because.fit(\n    equations   = [\"y ~ x\"],\n    data        = {\"x\": x, \"y\": y},\n    num_samples = 1000,\n    num_warmup  = 500,\n    num_chains  = 4\n)\n\n# Posterior summary\nimport arviz as az\nidata = az.from_numpyro(result[\"mcmc\"])\nprint(az.summary(idata, var_names=[\"beta_y_x\", \"alpha_y\"]))"
+    "text": "Basic usage\nimport because\nimport numpy as np\n\n# Simulate some data\nrng = np.random.default_rng(42)\nn   = 200\nx   = rng.normal(size=n)\ny   = 0.7 * x + rng.normal(size=n)\n\nresult = because.fit(\n    equations   = [\"y ~ x\"],\n    data        = {\"x\": x, \"y\": y},\n    num_samples = 1000,\n    num_warmup  = 500,\n    num_chains  = 4\n)\n\n# Posterior summary\nimport arviz as az\nidata = az.from_numpyro(result[\"mcmc\"])\nprint(az.summary(idata, var_names=[\"beta_y_x\", \"alpha_y\"]))"
   },
   {
     "objectID": "articles/python_usage.html#specifying-families",
     "href": "articles/python_usage.html#specifying-families",
     "title": "Using because-py directly in Python",
     "section": "Specifying families",
-    "text": "Specifying families\nPass a family dictionary to use non-Gaussian likelihoods:\nresult = because.fit(\n    equations = [\"y ~ x + z\"],\n    data      = {\"x\": x, \"z\": z, \"y\": y_counts},\n    family    = {\"y\": \"poisson\"},\n    num_samples = 2000\n)\nSupported families: \"gaussian\", \"poisson\", \"binomial\", \"negbinomial\", \"ordinal\"."
+    "text": "Specifying families\nPass a family dictionary to use non-Gaussian likelihoods:\nresult = because.fit(\n    equations   = [\"y ~ x + z\"],\n    data        = {\"x\": x, \"z\": z, \"y\": y_counts},\n    family      = {\"y\": \"poisson\"},\n    num_samples = 2000\n)\nSupported families: \"gaussian\", \"poisson\", \"binomial\", \"negbinomial\", \"ordinal\"."
   },
   {
     "objectID": "articles/python_usage.html#d-separation-testing",
@@ -187,13 +173,6 @@
     "title": "Using because-py directly in Python",
     "section": "Using ArviZ for diagnostics",
     "text": "Using ArviZ for diagnostics\nimport arviz as az\n\nidata = az.from_numpyro(result[\"mcmc\"])\n\n# Trace plots\naz.plot_trace(idata)\n\n# R-hat and ESS\nprint(az.summary(idata))\n\n# WAIC\nprint(az.waic(idata))"
-  },
-  {
-    "objectID": "articles/python_usage.html#gpu-multi-device-sampling",
-    "href": "articles/python_usage.html#gpu-multi-device-sampling",
-    "title": "Using because-py directly in Python",
-    "section": "GPU / multi-device sampling",
-    "text": "GPU / multi-device sampling\nJAX handles device placement automatically. To run 4 chains on 4 GPUs:\nimport jax\nprint(jax.devices())   # check available devices\n\nresult = because.fit(\n    equations  = [\"y ~ x\"],\n    data       = data_dict,\n    num_chains = 4,       # one chain per device when possible\n    n_cores    = 4\n)"
   },
   {
     "objectID": "reference/builder.compiler.NumPyroBuilder.html",
@@ -229,19 +208,5 @@
     "title": "API Reference",
     "section": "",
     "text": "Lower-level classes for building and inspecting NumPyro models.\n\n\n\nbuilder.compiler.NumPyroBuilder\nTakes a parsed causal graph and generates the dynamic NumPyro model via a closure."
-  },
-  {
-    "objectID": "articles/installation.html#from-r-recommended",
-    "href": "articles/installation.html#from-r-recommended",
-    "title": "Installation & Setup",
-    "section": "From R (recommended)",
-    "text": "From R (recommended)\n\nStep 1 — Install the because R package\n# Stable release\nremotes::install_github(\"because-pkg/because@v1.3.0\", build_vignettes = TRUE)\n\n# Latest development version\nremotes::install_github(\"because-pkg/because\", build_vignettes = TRUE)\n\n\nStep 2 — Install reticulate\ninstall.packages(\"reticulate\")\n\n\nStep 3 — Install Python (if needed)\nIf you do not already have Python on your system, reticulate can install Miniconda for you (skip this if Python is already installed):\nreticulate::install_miniconda()\n\n\nStep 4 — One-step setup\nbecause provides a built-in helper that installs all required Python packages (numpyro, jax, jaxlib, networkx, funsor, and because_py) into your active Python environment:\ninstall_because_numpyro()\nThe function automatically detects your active Python environment — including RStudio project-level virtual environments (.venv) and any existing reticulate configuration — falling back to \"r-reticulate\" if none is found.\n\n\nTroubleshooting: wrong Python environment\nIf in a fresh R session reticulate picks up a different Python environment than the one where the packages were installed, because will throw:\nError: Failed to import python module 'because.api'.\nPython is currently running from: /path/to/wrong/python\nEnsure because_py is installed in this exact environment.\nTry running: install_because_numpyro()\nIn this case, point reticulate to the correct environment before calling because():\nreticulate::use_virtualenv(\"r-reticulate\", required = TRUE)"
-  },
-  {
-    "objectID": "articles/installation.html#directly-in-python",
-    "href": "articles/installation.html#directly-in-python",
-    "title": "Installation & Setup",
-    "section": "Directly in Python",
-    "text": "Directly in Python\npip install because_py\nOr from source:\ngit clone https://github.com/because-pkg/because_py.git\ncd because_py\npip install -e ."
   }
 ]

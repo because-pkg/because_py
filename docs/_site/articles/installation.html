@@ -189,12 +189,6 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
   <li><a href="#troubleshooting-wrong-python-environment" id="toc-troubleshooting-wrong-python-environment" class="nav-link" data-scroll-target="#troubleshooting-wrong-python-environment">Troubleshooting: wrong Python environment</a></li>
   </ul></li>
   <li><a href="#directly-in-python" id="toc-directly-in-python" class="nav-link" data-scroll-target="#directly-in-python">Directly in Python</a></li>
-  <li><a href="#jax-configuration" id="toc-jax-configuration" class="nav-link" data-scroll-target="#jax-configuration">JAX configuration</a>
-  <ul class="collapse">
-  <li><a href="#cpu-default" id="toc-cpu-default" class="nav-link" data-scroll-target="#cpu-default">CPU (default)</a></li>
-  <li><a href="#gpu-nvidia" id="toc-gpu-nvidia" class="nav-link" data-scroll-target="#gpu-nvidia">GPU (NVIDIA)</a></li>
-  <li><a href="#apple-silicon-m-series" id="toc-apple-silicon-m-series" class="nav-link" data-scroll-target="#apple-silicon-m-series">Apple Silicon (M-series)</a></li>
-  </ul></li>
   </ul>
 <div class="toc-actions"><ul><li><a href="https://github.com/because-pkg/because_py/issues/new" class="toc-action"><i class="bi bi-github"></i>Report an issue</a></li><li><a href="https://github.com/because-pkg/because_py/blob/main/articles/installation.qmd" class="toc-action"><i class="bi empty"></i>View source</a></li></ul></div></nav>
     </div>
@@ -269,24 +263,8 @@ Try running: install_because_numpyro()</code></pre>
 <div class="sourceCode" id="cb8"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone https://github.com/because-pkg/because_py.git</span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> because_py</span>
 <span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install <span class="at">-e</span> .</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
-</section>
-<section id="jax-configuration" class="level2">
-<h2 class="anchored" data-anchor-id="jax-configuration">JAX configuration</h2>
-<section id="cpu-default" class="level3">
-<h3 class="anchored" data-anchor-id="cpu-default">CPU (default)</h3>
-<p>No extra configuration needed.</p>
-</section>
-<section id="gpu-nvidia" class="level3">
-<h3 class="anchored" data-anchor-id="gpu-nvidia">GPU (NVIDIA)</h3>
-<div class="sourceCode" id="cb9"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install <span class="at">--upgrade</span> <span class="st">"jax[cuda12_pip]"</span> <span class="dt">\</span></span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">-f</span> https://storage.googleapis.com/jax-releases/jax_cuda_releases.html</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
-</section>
-<section id="apple-silicon-m-series" class="level3">
-<h3 class="anchored" data-anchor-id="apple-silicon-m-series">Apple Silicon (M-series)</h3>
-<div class="sourceCode" id="cb10"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install jax-metal</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 
 
-</section>
 </section>
 
 </main> <!-- /main -->
