@@ -45,8 +45,6 @@ website:
             href: articles/reticulate_usage.html
           - text: "Using because-py directly in Python"
             href: articles/python_usage.html
-          - text: "Phylogenetic models"
-            href: articles/phylogenetic.html
     right:
       - icon: github
         href: https://github.com/because-pkg/because_py

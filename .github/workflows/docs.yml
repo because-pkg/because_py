@@ -32,7 +32,7 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          pip install because_py quartodoc
+          pip install -e . quartodoc
           pip install "jax[cpu]" numpyro
 
       - name: Set up Quarto
