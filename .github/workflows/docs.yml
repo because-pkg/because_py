@@ -30,19 +30,14 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Python dependencies
-        run: |
-          pip install -e . quartodoc
-          pip install "jax[cpu]" numpyro
-
       - name: Set up Quarto
         uses: quarto-dev/quarto-actions/setup@v2
         with:
           version: "1.4.549"
 
-      - name: Build API reference with quartodoc
-        working-directory: docs
-        run: quartodoc build
+      - name: Install Python dependencies
+        run: |
+          pip install because_py numpyro "jax[cpu]"
 
       - name: Render Quarto site
         working-directory: docs
