@@ -1,6 +1,6 @@
 # because-py
 
-**Python NumPyro backend for the R [`because`](https://because-pkg.github.io/because/) package.**
+**Python NumPyro backend for the R [`because`](https://because-pkg.github.io) package.**
 
 [![Docs](https://img.shields.io/badge/docs-because--py-0076BA)](https://because-pkg.github.io/because_py/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
