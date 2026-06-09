@@ -89,7 +89,7 @@ For the R package documentation:
 
 ## How it works
 
-because-py parses SEM formulas into a directed acyclic graph (DAG), topologically sorts the nodes, and generates a NumPyro model closure on the fly. The model is sampled with NUTS (No-U-Turn Sampler) via JAX — supporting CPU, GPU, and TPU backends.
+because-py parses SEM formulas into a directed acyclic graph (DAG), topologically sorts the nodes, and generates a NumPyro model closure on the fly. The model is sampled with NUTS (No-U-Turn Sampler) via JAX.
 
 ---
 

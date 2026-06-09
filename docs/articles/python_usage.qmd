@@ -100,18 +100,3 @@ print(az.summary(idata))
 print(az.waic(idata))
 ```
 
-## GPU / multi-device sampling
-
-JAX handles device placement automatically. To run 4 chains on 4 GPUs:
-
-```python
-import jax
-print(jax.devices())   # check available devices
-
-result = because.fit(
-    equations  = ["y ~ x"],
-    data       = data_dict,
-    num_chains = 4,
-    n_cores    = 4
-)
-```

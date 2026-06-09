@@ -84,19 +84,4 @@ cd because_py
 pip install -e .
 ```
 
-## JAX configuration
-
-### CPU (default)
-No extra configuration needed.
-
-### GPU (NVIDIA)
-```bash
-pip install --upgrade "jax[cuda12_pip]" \
-  -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-```
-
-### Apple Silicon (M-series)
-```bash
-pip install jax-metal
-```
 
