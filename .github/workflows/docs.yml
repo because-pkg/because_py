@@ -37,7 +37,7 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          pip install because_py numpyro "jax[cpu]"
+          pip install . numpyro "jax[cpu]"
 
       - name: Render Quarto site
         working-directory: docs
