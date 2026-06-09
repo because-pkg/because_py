@@ -282,7 +282,6 @@ def _calculate_waic_internal(model_func, mcmc, jax_data):
     # Detect multiPhylo: K_tree variables present in samples
     k_tree_keys = [k for k in flat_samples.keys() if k.startswith("K_tree")]
     has_multi_phylo = len(k_tree_keys) > 0
-    print(f"[WAIC debug] K_tree keys found: {k_tree_keys}, has_multi_phylo={has_multi_phylo}")
 
     if has_multi_phylo:
         # Determine number of trees from jax_data

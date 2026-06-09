@@ -1,6 +1,7 @@
 setup.py
 because/__init__.py
 because/api.py
+because/test_waic.py
 because/builder/__init__.py
 because/builder/compiler.py
 because/builder/graph.py
