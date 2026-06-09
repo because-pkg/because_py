@@ -1,0 +1,18 @@
+# API Reference {.doc .doc-index}
+
+## High-level API
+
+Main entry point for fitting causal models with NumPyro.
+
+| | |
+| --- | --- |
+| [api.fit](api.fit.qmd#because.api.fit) | High-level API for because-py. Fits a causal hierarchical model using NumPyro. |
+| [api.get_dsep_equations](api.get_dsep_equations.qmd#because.api.get_dsep_equations) | Helper to return implied d-sep claims without fitting the model. |
+
+## Model Builder
+
+Lower-level classes for building and inspecting NumPyro models.
+
+| | |
+| --- | --- |
+| [builder.compiler.NumPyroBuilder](builder.compiler.NumPyroBuilder.qmd#because.builder.compiler.NumPyroBuilder) | Takes a parsed causal graph and generates the dynamic NumPyro model via a closure. |

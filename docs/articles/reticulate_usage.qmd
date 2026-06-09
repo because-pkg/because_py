@@ -1,0 +1,141 @@
+---
+title: "Using because-py via R (reticulate)"
+description: |
+  How to use the NumPyro engine from R through the because package and reticulate.
+  All examples use the bird life-history dataset included in because.phybase.
+execute:
+  eval: false   # set to true when running in an environment with because + NumPyro installed
+---
+
+```{r setup}
+#| include: false
+library(because)
+library(because.phybase)
+```
+
+## Overview
+
+The `because` R package calls because-py transparently whenever you specify `engine = "numpyro"`.
+You do not need to write any Python code — reticulate handles the bridge.
+The workflow is identical to a JAGS run: same formula syntax, same `summary()` and `plot_dag()` methods.
+
+## A simple causal model
+
+```{r simple-model}
+library(because)
+library(because.phybase)
+
+# Bird life-history data (678 species)
+data(birds)
+
+fit <- because(
+  equations = list(
+    Brain    ~ Mass + Migration,
+    Lifespan ~ Brain,
+    Clutch   ~ Brain + Mass + Migration
+  ),
+  data   = birds,
+  engine = "numpyro",
+  n.iter = 2000,
+  n.burnin = 500
+)
+
+summary(fit)
+```
+
+## D-separation testing first
+
+Following best practice, always test d-separation before comparing models by WAIC.
+Only models that pass all d-sep tests are structurally valid.
+
+```{r dsep-first}
+# Run d-sep tests without fitting the full model (fast)
+fit_dsep <- because(
+  equations = list(
+    Brain    ~ Mass + Migration,
+    Lifespan ~ Brain,
+    Clutch   ~ Brain + Mass + Migration
+  ),
+  data   = birds,
+  engine = "numpyro",
+  dsep   = TRUE,
+  dsep_only = TRUE
+)
+
+fit_dsep$dsep
+```
+
+## Inspecting the generated NumPyro model code
+
+A unique feature of because-py is that the generated NumPyro model is stored as
+an executable Python string, which you can inspect and modify:
+
+```{r inspect-code}
+cat(fit$numpyro_code)
+```
+
+This is useful for:
+
+- **Verification** — confirming the model matches your theoretical expectations
+- **Customisation** — copying the code to a `.py` script and adding custom priors or likelihoods
+- **Teaching** — showing students the connection between DAG specification and probabilistic code
+
+## Comparing models
+
+Once d-sep is confirmed, use WAIC to compare models with the same response variable:
+
+```{r compare}
+fit_null <- because(
+  equations = list(Brain ~ Mass),
+  data      = birds,
+  engine    = "numpyro",
+  n.iter    = 2000
+)
+
+because_compare(fit, fit_null)
+```
+
+::: {.callout-important}
+WAIC comparisons are only valid between models that share the same response variable(s)
+and the same observations. Cross-model comparisons with different endogenous variables
+will produce inflated WAIC values.
+:::
+
+## Extending chains with because_continue()
+
+NumPyro's HMC/NUTS converges so efficiently that `because_continue()` is rarely needed.
+If you do need more samples, simply re-run with a larger `n.iter`:
+
+```{r more-samples}
+fit2 <- because(
+  equations = list(
+    Brain    ~ Mass + Migration,
+    Lifespan ~ Brain,
+    Clutch   ~ Brain + Mass + Migration
+  ),
+  data     = birds,
+  engine   = "numpyro",
+  n.iter   = 5000,   # increase from 2000
+  n.burnin = 500
+)
+```
+
+## Visualising the DAG
+
+All plot methods work identically regardless of engine:
+
+```{r plot}
+plot_dag(fit)
+```
+
+## Traceplots and diagnostics
+
+```{r traceplots}
+# Using coda
+plot(fit$samples)
+
+# Or with bayesplot
+library(bayesplot)
+mcmc_trace(fit$samples, pars = c("beta_Brain_Mass", "beta_Brain_Migration"))
+mcmc_areas(fit$samples, pars = c("beta_Brain_Mass", "beta_Brain_Migration"))
+```

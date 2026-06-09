@@ -1,0 +1,86 @@
+---
+title: "because-py"
+subtitle: "Python NumPyro backend for Bayesian causal inference"
+---
+
+**because-py** is the Python inference engine behind the R [`because`](https://because-pkg.github.io/because/) package.
+It translates structural equation models (SEMs) specified as R-style formulas into fully probabilistic
+[NumPyro](https://num.pyro.ai/) models and samples them with HMC/NUTS.
+
+You can use **because-py** in two ways:
+
+::: {.grid}
+
+::: {.g-col-6}
+### From R via reticulate
+Use the familiar `because()` interface in R with `engine = "numpyro"`.
+No Python knowledge required.
+
+```r
+library(because)
+
+# Simulate data
+set.seed(42)
+n   <- 200
+x   <- rnorm(n)
+y   <- 0.7 * x + rnorm(n)
+dat <- data.frame(x = x, y = y)
+
+# Fit causal model
+fit <- because(
+  equations = list(y ~ x),
+  data      = dat,
+  engine    = "numpyro",
+  n.iter    = 1000,
+  n.burnin  = 500
+)
+summary(fit)
+```
+:::
+
+::: {.g-col-6}
+### Directly in Python
+Call `because.fit()` for full control over JAX devices or
+integration into Python pipelines.
+
+```python
+import because
+import numpy as np
+
+# Simulate data
+rng = np.random.default_rng(42)
+n   = 200
+x   = rng.normal(size=n)
+y   = 0.7 * x + rng.normal(size=n)
+
+# Fit causal model
+result = because.fit(
+    equations   = ["y ~ x"],
+    data        = {"x": x, "y": y},
+    num_samples = 1000,
+    num_warmup  = 500
+)
+```
+:::
+
+:::
+
+---
+
+## Installation
+
+See the [Installation & Setup](articles/installation.html) article for full instructions including
+JAX/GPU configuration.
+
+```bash
+pip install because_py
+```
+
+## How it works
+
+because-py parses SEM formulas into a directed acyclic graph (DAG), topologically sorts the
+nodes, and generates a NumPyro model closure on the fly. The model is then sampled with NUTS
+(No-U-Turn Sampler) via JAX — supporting CPU, GPU, and TPU backends.
+
+For a full description of the statistical framework, see the
+[because package documentation](https://because-pkg.github.io/because/).

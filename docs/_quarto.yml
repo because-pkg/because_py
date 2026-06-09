@@ -1,0 +1,76 @@
+project:
+  type: website
+  output-dir: _site
+
+# quartodoc: generates API reference from Python docstrings
+quartodoc:
+  package: because
+  source_dir: ../
+  dir: reference
+  title: "API Reference"
+  style: pkgdown
+  sections:
+    - title: "High-level API"
+      desc: "Main entry point for fitting causal models with NumPyro."
+      contents:
+        - api.fit
+        - api.get_dsep_equations
+    - title: "Model Builder"
+      desc: "Lower-level classes for building and inspecting NumPyro models."
+      contents:
+        - builder.compiler.NumPyroBuilder
+
+website:
+  title: "because-py"
+  description: "Python NumPyro backend for the R because package — Bayesian causal inference via reticulate or directly in Python."
+  favicon: logo.png
+  repo-url: https://github.com/because-pkg/because_py
+  repo-actions: [issue, source]
+
+  navbar:
+    background: "#0076BA"
+    foreground: light
+    logo: logo.png
+    logo-alt: "because-py"
+    left:
+      - text: "Get Started"
+        href: index.html
+      - text: "Reference"
+        href: reference/index.html
+      - text: "Articles"
+        menu:
+          - text: "Installation & Setup"
+            href: articles/installation.html
+          - text: "Using because-py via R (reticulate)"
+            href: articles/reticulate_usage.html
+          - text: "Using because-py directly in Python"
+            href: articles/python_usage.html
+          - text: "Phylogenetic models"
+            href: articles/phylogenetic.html
+    right:
+      - icon: github
+        href: https://github.com/because-pkg/because_py
+
+  sidebar: false
+
+  page-footer:
+    left: "© because-pkg"
+    right:
+      - icon: github
+        href: https://github.com/because-pkg/because_py
+
+format:
+  html:
+    theme:
+      light: [flatly, custom.scss]
+    toc: true
+    toc-depth: 3
+    code-copy: true
+    code-overflow: wrap
+    highlight-style: github
+
+execute:
+  freeze: auto
+  echo: true
+  warning: false
+  message: false

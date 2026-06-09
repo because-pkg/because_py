@@ -1,0 +1,102 @@
+---
+title: "Installation & Setup"
+---
+
+## Installing because-py
+
+because-py is the Python NumPyro backend for the R [`because`](https://because-pkg.github.io/because/) package.
+It can be used from R (the recommended approach) or directly in Python.
+
+---
+
+## From R (recommended)
+
+### Step 1 — Install the `because` R package
+
+```r
+# Stable release
+remotes::install_github("because-pkg/because@v1.3.0", build_vignettes = TRUE)
+
+# Latest development version
+remotes::install_github("because-pkg/because", build_vignettes = TRUE)
+```
+
+### Step 2 — Install reticulate
+
+```r
+install.packages("reticulate")
+```
+
+### Step 3 — Install Python (if needed)
+
+If you do not already have Python on your system, `reticulate` can install
+Miniconda for you (skip this if Python is already installed):
+
+```r
+reticulate::install_miniconda()
+```
+
+### Step 4 — One-step setup
+
+`because` provides a built-in helper that installs all required Python packages
+(`numpyro`, `jax`, `jaxlib`, `networkx`, `funsor`, and `because_py`) into your
+active Python environment:
+
+```r
+install_because_numpyro()
+```
+
+The function automatically detects your active Python environment — including
+RStudio project-level virtual environments (`.venv`) and any existing `reticulate`
+configuration — falling back to `"r-reticulate"` if none is found.
+
+### Troubleshooting: wrong Python environment
+
+If in a fresh R session `reticulate` picks up a different Python environment than
+the one where the packages were installed, `because` will throw:
+
+```
+Error: Failed to import python module 'because.api'.
+Python is currently running from: /path/to/wrong/python
+Ensure because_py is installed in this exact environment.
+Try running: install_because_numpyro()
+```
+
+In this case, point `reticulate` to the correct environment before calling `because()`:
+
+```r
+reticulate::use_virtualenv("r-reticulate", required = TRUE)
+```
+
+---
+
+## Directly in Python
+
+```bash
+pip install because_py
+```
+
+Or from source:
+
+```bash
+git clone https://github.com/because-pkg/because_py.git
+cd because_py
+pip install -e .
+```
+
+## JAX configuration
+
+### CPU (default)
+No extra configuration needed.
+
+### GPU (NVIDIA)
+```bash
+pip install --upgrade "jax[cuda12_pip]" \
+  -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+```
+
+### Apple Silicon (M-series)
+```bash
+pip install jax-metal
+```
+

@@ -1,0 +1,5 @@
+# api.get_dsep_equations { #because.api.get_dsep_equations }
+
+`api.get_dsep_equations(equations, latent=None)`
+
+Helper to return implied d-sep claims without fitting the model.

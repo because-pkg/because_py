@@ -1,0 +1,43 @@
+/*-- scss:defaults --*/
+
+/* Primary colour matching because pkgdown theme: #0076BA */
+$primary: #0076BA;
+
+/*-- scss:rules --*/
+
+/* Navbar */
+.navbar {
+  background-color: #0076BA !important;
+}
+
+.navbar-brand, .navbar-nav .nav-link {
+  color: #fff !important;
+}
+
+.navbar-nav .nav-link:hover {
+  color: #d0eaf7 !important;
+}
+
+/* Code blocks */
+pre.sourceCode {
+  border-left: 3px solid #0076BA;
+  background-color: #f8f9fa;
+}
+
+/* API reference headings */
+.doc-heading {
+  border-bottom: 2px solid #0076BA;
+  padding-bottom: 0.3rem;
+  margin-bottom: 1rem;
+}
+
+/* Callouts */
+.callout-tip {
+  border-left-color: #0076BA;
+}
+
+/* Footer */
+.nav-footer {
+  background-color: #f8f9fa;
+  border-top: 1px solid #dee2e6;
+}

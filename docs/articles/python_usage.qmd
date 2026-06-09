@@ -1,0 +1,117 @@
+---
+title: "Using because-py directly in Python"
+description: |
+  How to call the because Python API directly for integration into
+  Python-native workflows.
+execute:
+  eval: false
+---
+
+## Overview
+
+because-py exposes a `fit()` function that accepts formula strings and NumPy arrays.
+This is useful when you want to integrate causal modelling into a Python pipeline
+(e.g., alongside pandas, scikit-learn, or ArviZ).
+
+## Basic usage
+
+```python
+import numpy as np
+import because
+
+# Simulate some data
+rng = np.random.default_rng(42)
+n   = 200
+x   = rng.normal(size=n)
+y   = 0.7 * x + rng.normal(size=n)
+
+result = because.fit(
+    equations   = ["y ~ x"],
+    data        = {"x": x, "y": y},
+    num_samples = 1000,
+    num_warmup  = 500,
+    num_chains  = 4
+)
+
+# Posterior summary
+import arviz as az
+idata = az.from_numpyro(result["mcmc"])
+print(az.summary(idata, var_names=["beta_y_x", "alpha_y"]))
+```
+
+## Specifying families
+
+Pass a `family` dictionary to use non-Gaussian likelihoods:
+
+```python
+result = because.fit(
+    equations = ["y ~ x + z"],
+    data      = {"x": x, "z": z, "y": y_counts},
+    family    = {"y": "poisson"},
+    num_samples = 2000
+)
+```
+
+Supported families: `"gaussian"`, `"poisson"`, `"binomial"`, `"negbinomial"`, `"ordinal"`.
+
+## D-separation testing
+
+```python
+dsep_result = because.fit(
+    equations = ["Brain ~ Mass + Migration",
+                 "Lifespan ~ Brain",
+                 "Clutch  ~ Brain + Mass + Migration"],
+    data      = data_dict,
+    dsep      = True,
+    dsep_only = True   # skip MCMC, only run d-sep tests
+)
+
+for test in dsep_result["dsep"]:
+    print(test)
+```
+
+## Accessing the generated model code
+
+```python
+result = because.fit(
+    equations   = ["y ~ x"],
+    data        = {"x": x, "y": y},
+    num_samples = 1000
+)
+
+# Print the auto-generated NumPyro model
+print(result["model_code"])
+```
+
+## Using ArviZ for diagnostics
+
+```python
+import arviz as az
+
+idata = az.from_numpyro(result["mcmc"])
+
+# Trace plots
+az.plot_trace(idata)
+
+# R-hat and ESS
+print(az.summary(idata))
+
+# WAIC
+print(az.waic(idata))
+```
+
+## GPU / multi-device sampling
+
+JAX handles device placement automatically. To run 4 chains on 4 GPUs:
+
+```python
+import jax
+print(jax.devices())   # check available devices
+
+result = because.fit(
+    equations  = ["y ~ x"],
+    data       = data_dict,
+    num_chains = 4,       # one chain per device when possible
+    n_cores    = 4
+)
+```

@@ -1,0 +1,37 @@
+# builder.compiler.NumPyroBuilder { #because.builder.compiler.NumPyroBuilder }
+
+`builder.compiler.NumPyroBuilder(self, causal_graph, family_dict=None, deterministic_terms=None, cor_matrices=None, fix_latent='loading')`
+
+Takes a parsed causal graph and generates the dynamic NumPyro model via a closure.
+
+## Methods
+
+| Name | Description |
+| --- | --- |
+| [generate_model_code_string](#because.builder.compiler.NumPyroBuilder.generate_model_code_string) | Returns a self-contained, executable Python source string that |
+| [generate_model_function](#because.builder.compiler.NumPyroBuilder.generate_model_function) | Returns a callable python function representing the NumPyro model. |
+
+### generate_model_code_string { #because.builder.compiler.NumPyroBuilder.generate_model_code_string }
+
+`builder.compiler.NumPyroBuilder.generate_model_code_string(data_shapes=None)`
+
+Returns a self-contained, executable Python source string that
+represents the NumPyro model built by generate_model_function().
+
+The output is intended for inspection, auditing, or copy-paste
+modification in a standalone Python script.  Covariance / Cholesky
+matrices are referenced as arguments so the function signature
+matches what because-py passes internally.
+
+:param data_shapes: Optional dict mapping variable names to their
+    shapes (e.g. {"Brain": (678,), "phy": (678, 678)}).  Used to
+    annotate the function signature with dimension comments.
+:return: str — a Python source string.
+
+### generate_model_function { #because.builder.compiler.NumPyroBuilder.generate_model_function }
+
+`builder.compiler.NumPyroBuilder.generate_model_function(data_for_compilation=None, force_plate_obs=False)`
+
+Returns a callable python function representing the NumPyro model.
+:param data_for_compilation: Optional dict of the data to statically optimize the JAX trace (e.g. for NaN masking).
+:param force_plate_obs: If True, forces the use of numpyro.plate for observations even if multiPhylo is detected. Used for WAIC calculation.

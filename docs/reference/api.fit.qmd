@@ -1,0 +1,20 @@
+# api.fit { #because.api.fit }
+
+`api.fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False, dsep_only=False, calculate_waic=False, num_samples=1000, num_warmup=500, num_chains=1, thinning=1, n_cores=1, seed=0, dsep_max_obs=2000, quiet=False, dsep_equations_to_run=None, adapt_delta=0.95, fix_latent='loading')`
+
+High-level API for because-py. Fits a causal hierarchical model using NumPyro.
+
+:param equations: List of formula strings (e.g., ["y ~ x + z + (1|group)"]).
+:param data: Dictionary of numpy arrays for the data.
+:param family: Dictionary specifying families (e.g. {"y": "poisson"}). Default is "gaussian".
+:param latent: List of unmeasured/latent variables (e.g. ["L1"]). If None, auto-detected from equations.
+:param dsep: Boolean, if True, computes and tests the basis set of implied conditional independencies.
+:param num_samples: Number of post-warmup MCMC samples.
+:param num_warmup: Number of warmup MCMC samples.
+:param num_chains: Number of parallel MCMC chains.
+:param thinning: Thinning interval for MCMC samples.
+:param seed: Random seed for JAX PRNGKey.
+:param dsep_max_obs: Maximum number of observations to use for d-sep tests (random subsampling) for speed.
+:param quiet: Boolean, if True, suppresses MCMC progress bars.
+
+:return: A dictionary containing the fitted MCMC object and optional dsep results.

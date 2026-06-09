@@ -78,6 +78,11 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
         
     compiler = NumPyroBuilder(graph, family_dict=family, deterministic_terms=deterministic_terms, cor_matrices=cor_matrices, fix_latent=fix_latent)
     model_func = compiler.generate_model_function(data_for_compilation=data)
+    # Generate human-readable Python source for inspection / because_continue()
+    try:
+        model_code_str = compiler.generate_model_code_string()
+    except Exception:
+        model_code_str = None
     
     # Convert data to JAX arrays
     jax_data = {}
@@ -119,7 +124,8 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
         
         results["samples"] = numpy_samples
         results["parameter_map"] = None
-        results["model_string"] = "NumPyro Causal Hierarchical Model" # To pass a generic string
+        results["model_string"] = "NumPyro Causal Hierarchical Model"  # legacy placeholder
+        results["model_code"] = model_code_str  # executable Python source string
         
         if calculate_waic:
             if not quiet:
