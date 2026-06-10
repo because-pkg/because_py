@@ -20,23 +20,29 @@ import because
 import numpy as np
 
 # Simulate some data
+import because
+import numpy as np
 rng = np.random.default_rng(42)
-n   = 200
+n   = 1000
 x   = rng.normal(size=n)
+k   = 0.5 * y + rng.normal(size=n)
 y   = 0.7 * x + rng.normal(size=n)
 
 result = because.fit(
-    equations   = ["y ~ x"],
-    data        = {"x": x, "y": y},
-    num_samples = 1000,
-    num_warmup  = 500,
-    num_chains  = 4
+    equations   = ["y ~ x","k ~ y"],
+    data        = {"x": x, "y": y,"k":k},
+    num_samples = 2000,
+    num_warmup  = 1000,
+    num_chains  = 3       
 )
 
 # Posterior summary
 import arviz as az
 idata = az.from_numpyro(result["mcmc"])
 print(az.summary(idata, var_names=["beta_y_x", "alpha_y"]))
+
+# Or with the convienience function because.summary()
+because.summary(result)
 ```
 
 ## Specifying families
@@ -44,12 +50,20 @@ print(az.summary(idata, var_names=["beta_y_x", "alpha_y"]))
 Pass a `family` dictionary to use non-Gaussian likelihoods:
 
 ```python
-result = because.fit(
-    equations   = ["y ~ x + z"],
-    data        = {"x": x, "z": z, "y": y_counts},
-    family      = {"y": "poisson"},
-    num_samples = 2000
+#Simulate count data
+log_lambda = 0.2 + (0.4 * x)
+z_counts = rng.poisson(lam=np.exp(log_lambda))
+
+result2 = because.fit(
+    equations   = ["y ~ x", "k ~ y","z ~ x"],
+    data        = {"x": x, "y": y, "k":k,"z": z_counts},
+    family      = {"z": "poisson"},
+    num_samples = 2000,
+    num_warmup  = 1000,
+    num_chains  = 3 
 )
+
+because.summary(result2)
 ```
 
 Supported families: `"gaussian"`, `"poisson"`, `"binomial"`, `"negbinomial"`, `"ordinal"`.
@@ -58,45 +72,24 @@ Supported families: `"gaussian"`, `"poisson"`, `"binomial"`, `"negbinomial"`, `"
 
 ```python
 dsep_result = because.fit(
-    equations = ["Brain ~ Mass + Migration",
-                 "Lifespan ~ Brain",
-                 "Clutch  ~ Brain + Mass + Migration"],
-    data      = data_dict,
+    equations   = ["y ~ x", "k ~ y","z ~ x"],
+    data        = {"x": x, "y": y, "k":k,"z": z_counts},
+    family      = {"z": "poisson"},
+    num_samples = 2000,
+    num_warmup  = 1000,
+    num_chains  = 3,
     dsep      = True,
-    dsep_only = True   # skip MCMC, only run d-sep tests
+    dsep_only = True   #skip path coefficient estimation, only run d-sep tests
 )
 
-for test in dsep_result["dsep"]:
-    print(test)
+because.dsep_summary(dsep_result)
+
 ```
 
 ## Accessing the generated model code
 
 ```python
-result = because.fit(
-    equations   = ["y ~ x"],
-    data        = {"x": x, "y": y},
-    num_samples = 1000
-)
-
 # Print the auto-generated NumPyro model
 print(result["model_code"])
-```
-
-## Using ArviZ for diagnostics
-
-```python
-import arviz as az
-
-idata = az.from_numpyro(result["mcmc"])
-
-# Trace plots
-az.plot_trace(idata)
-
-# R-hat and ESS
-print(az.summary(idata))
-
-# WAIC
-print(az.waic(idata))
 ```
 
