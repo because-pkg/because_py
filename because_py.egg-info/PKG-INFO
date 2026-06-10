@@ -1,4 +1,4 @@
-Metadata-Version: 2.1
+Metadata-Version: 2.4
 Name: because_py
 Version: 0.1.0
 Summary: Python NumPyro backend for the R 'because' package
@@ -9,3 +9,8 @@ Requires-Dist: numpyro
 Requires-Dist: jax
 Requires-Dist: jaxlib
 Requires-Dist: numpy
+Dynamic: author
+Dynamic: home-page
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary

@@ -363,23 +363,21 @@ class NumPyroBuilder:
                     for g_name, sig_g in sigma_struct_dict.items():
                         numpyro.deterministic(f"lambda_{var}_{g_name}", (sig_g**2) / (sig_g**2 + sigma**2))
                 elif family == "poisson":
-                    distribution = dist.Poisson(rate=jnp.exp(jnp.clip(mu, -20.0, 20.0)))
+                    distribution = dist.Poisson(rate=jnp.exp(mu))
                 elif family == "binomial":
                     distribution = dist.Bernoulli(logits=mu)
                 elif family == "negbinomial":
-                    r_raw = numpyro.sample(f"r_{var}", dist.Gamma(2.0, 0.1))
-                    r = jnp.clip(r_raw, 1e-4, 1e4)
-                    distribution = dist.NegativeBinomial2(mean=jnp.exp(jnp.clip(mu, -20.0, 20.0)), concentration=r)
+                    r = numpyro.sample(f"r_{var}", dist.Gamma(2.0, 0.1))
+                    distribution = dist.NegativeBinomial2(mean=jnp.exp(mu), concentration=r)
                 elif family == "zip":
                     psi_logit = numpyro.sample(f"psi_{var}", dist.Normal(0, 2))
                     gate = jnp.exp(psi_logit) / (1 + jnp.exp(psi_logit))
-                    distribution = dist.ZeroInflatedPoisson(gate=gate, rate=jnp.exp(jnp.clip(mu, -20.0, 20.0)))
+                    distribution = dist.ZeroInflatedPoisson(gate=gate, rate=jnp.exp(mu))
                 elif family == "zinb":
                     psi_logit = numpyro.sample(f"psi_{var}", dist.Normal(0, 2))
                     gate = jnp.exp(psi_logit) / (1 + jnp.exp(psi_logit))
-                    r_raw = numpyro.sample(f"r_{var}", dist.Gamma(2.0, 0.1))
-                    r = jnp.clip(r_raw, 1e-4, 1e4)
-                    distribution = dist.ZeroInflatedNegativeBinomial2(gate=gate, mean=jnp.exp(jnp.clip(mu, -20.0, 20.0)), concentration=r)
+                    r = numpyro.sample(f"r_{var}", dist.Gamma(2.0, 0.1))
+                    distribution = dist.ZeroInflatedNegativeBinomial2(gate=gate, mean=jnp.exp(mu), concentration=r)
                 elif family == "multinomial":
                     distribution = dist.Categorical(logits=mu)
                 elif family == "ordinal":
@@ -415,22 +413,20 @@ class NumPyroBuilder:
                         dist_imputed = dist.Normal(mu[missing_idx], sigma)
                         dist_obs = dist.Normal(mu[obs_idx], sigma)
                     elif family == "poisson":
-                        dist_imputed = dist.Poisson(rate=jnp.exp(jnp.clip(mu[missing_idx], -20.0, 20.0)))
-                        dist_obs = dist.Poisson(rate=jnp.exp(jnp.clip(mu[obs_idx], -20.0, 20.0)))
+                        dist_imputed = dist.Poisson(rate=jnp.exp(mu[missing_idx]))
+                        dist_obs = dist.Poisson(rate=jnp.exp(mu[obs_idx]))
                     elif family == "binomial":
                         dist_imputed = dist.Bernoulli(logits=mu[missing_idx])
                         dist_obs = dist.Bernoulli(logits=mu[obs_idx])
                     elif family == "negbinomial":
-                        r_clip = jnp.clip(r, 1e-4, 1e4)
-                        dist_imputed = dist.NegativeBinomial2(mean=jnp.exp(jnp.clip(mu[missing_idx], -20.0, 20.0)), concentration=r_clip)
-                        dist_obs = dist.NegativeBinomial2(mean=jnp.exp(jnp.clip(mu[obs_idx], -20.0, 20.0)), concentration=r_clip)
+                        dist_imputed = dist.NegativeBinomial2(mean=jnp.exp(mu[missing_idx]), concentration=r)
+                        dist_obs = dist.NegativeBinomial2(mean=jnp.exp(mu[obs_idx]), concentration=r)
                     elif family == "zip":
-                        dist_imputed = dist.ZeroInflatedPoisson(gate=gate, rate=jnp.exp(jnp.clip(mu[missing_idx], -20.0, 20.0)))
-                        dist_obs = dist.ZeroInflatedPoisson(gate=gate, rate=jnp.exp(jnp.clip(mu[obs_idx], -20.0, 20.0)))
+                        dist_imputed = dist.ZeroInflatedPoisson(gate=gate, rate=jnp.exp(mu[missing_idx]))
+                        dist_obs = dist.ZeroInflatedPoisson(gate=gate, rate=jnp.exp(mu[obs_idx]))
                     elif family == "zinb":
-                        r_clip = jnp.clip(r, 1e-4, 1e4)
-                        dist_imputed = dist.ZeroInflatedNegativeBinomial2(gate=gate, mean=jnp.exp(jnp.clip(mu[missing_idx], -20.0, 20.0)), concentration=r_clip)
-                        dist_obs = dist.ZeroInflatedNegativeBinomial2(gate=gate, mean=jnp.exp(jnp.clip(mu[obs_idx], -20.0, 20.0)), concentration=r_clip)
+                        dist_imputed = dist.ZeroInflatedNegativeBinomial2(gate=gate, mean=jnp.exp(mu[missing_idx]), concentration=r)
+                        dist_obs = dist.ZeroInflatedNegativeBinomial2(gate=gate, mean=jnp.exp(mu[obs_idx]), concentration=r)
                     elif family == "multinomial":
                         dist_imputed = dist.Categorical(logits=mu[missing_idx])
                         dist_obs = dist.Categorical(logits=mu[obs_idx])
@@ -597,7 +593,7 @@ class NumPyroBuilder:
                     lines.append(f"{ind()}    sigma_{var}_{grp}**2 / (sigma_{var}_{grp}**2 + sigma_{var}**2))")
             elif family == "poisson":
                 lines.append(f"{ind()}with numpyro.plate('{var}_plate', N):")
-                lines.append(f"{ind(2)}numpyro.sample('{var}', dist.Poisson(rate=jnp.exp(jnp.clip(mu_{var}, -20, 20))), obs={var})")
+                lines.append(f"{ind(2)}numpyro.sample('{var}', dist.Poisson(rate=jnp.exp(mu_{var})), obs={var})")
             elif family == "binomial":
                 lines.append(f"{ind()}with numpyro.plate('{var}_plate', N):")
                 lines.append(f"{ind(2)}numpyro.sample('{var}', dist.Bernoulli(logits=mu_{var}), obs={var})")
@@ -605,7 +601,7 @@ class NumPyroBuilder:
                 lines.append(f"{ind()}r_{var} = numpyro.sample('r_{var}', dist.Gamma(2.0, 0.1))")
                 lines.append(f"{ind()}with numpyro.plate('{var}_plate', N):")
                 lines.append(f"{ind(2)}numpyro.sample('{var}', dist.NegativeBinomial2(")
-                lines.append(f"{ind(3)}mean=jnp.exp(jnp.clip(mu_{var}, -20, 20)), concentration=jnp.clip(r_{var}, 1e-4, 1e4)), obs={var})")
+                lines.append(f"{ind(3)}mean=jnp.exp(mu_{var}), concentration=r_{var}), obs={var})")
             else:
                 lines.append(f"{ind()}# Family '{family}' — see compiler.py for full implementation")
                 lines.append(f"{ind()}with numpyro.plate('{var}_plate', N):")
