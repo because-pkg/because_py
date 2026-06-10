@@ -69,11 +69,10 @@ result = because.fit(
 
 ## Installation
 
-See the [Installation & Setup](articles/installation.html) article for full instructions including
-JAX/GPU configuration.
+See the [Installation & Setup](articles/installation.html) article for full instructions.
 
 ```bash
-pip install because_py
+pip install git+https://github.com/because-pkg/because_py.git
 ```
 
 ## How it works
