@@ -11,7 +11,9 @@ setup(
         "numpyro",
         "jax",
         "jaxlib",
-        "numpy"
+        "numpy",
+        "networkx",
+        "funsor"
     ],
     python_requires=">=3.8",
 )
