@@ -73,7 +73,7 @@ reticulate::use_virtualenv("r-reticulate", required = TRUE)
 ## Directly in Python
 
 ```bash
-pip install because_py
+pip install git+https://github.com/because-pkg/because_py.git
 ```
 
 Or from source:

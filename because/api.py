@@ -126,6 +126,7 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
         # We can implement basic rhat/ess here if requested, but typically standard packages do this better.
         
         results["samples"] = numpy_samples
+        results["mcmc"] = mcmc
         results["parameter_map"] = None
         results["model_string"] = "NumPyro Causal Hierarchical Model"  # legacy placeholder
         results["model_code"] = model_code_str  # executable Python source string
