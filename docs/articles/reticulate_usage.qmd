@@ -108,7 +108,17 @@ NumPyro truly shines when handling phylogenetic uncertainty across multiple tree
 While JAGS struggles with indexing into large 3D arrays of precision matrices and evaluating the determinant dynamically at every MCMC step, `because_py` handles multiple trees using an advanced Rao-Blackwellization technique (`DiscreteHMCGibbs`). This marginalises out the discrete tree index and evaluates all trees simultaneously during the NUTS trajectory.
 
 ```{r multi-phylo}
-# 10 trees, 100 species
+# Simulate 10 trees for the 100 species using the 'ape' package
+library(ape)
+set.seed(123)
+multi_tree <- rmtree(N = 10, n = 100)
+
+# Assign the exact same species names to the tips of our simulated trees
+for (i in 1:10) {
+  multi_tree[[i]]$tip.label <- rhino.tree$tip.label
+}
+
+# Run the model across all 10 trees simultaneously
 fit_multi_numpyro <- because(
     equations = sem8_eq,
     data = rhino.dat,
