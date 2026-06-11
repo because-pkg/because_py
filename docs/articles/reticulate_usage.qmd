@@ -130,6 +130,13 @@ The `because` R package abstracts the underlying sampler so you can easily switc
 
 | Feature | JAGS (Default) | NIMBLE | NumPyro (Python) |
 | :--- | :--- | :--- | :--- |
+| **Distributions** | Gaussian, Poisson, Binomial, NegBinomial, ZI, Gamma, Beta, etc. | Extensive | Gaussian, Poisson, Binomial, NegBinomial, ZI |
+| **d-separation testing** | Yes | Yes | Yes |
+| **Latent variables (MAGs)** | Yes | Yes | Yes |
+| **Interaction terms** | Yes | Yes | Yes |
+| **Polynomials** | Yes | Yes | Yes |
+| **Deterministic nodes** | Yes | Yes | Yes |
+| **Multi-scale models (Hierarchical)**| Yes | Yes | Yes |
 | **Priors** | Extensive support | Extensive support | Standard priors |
 | **Random Effects** | Yes | Yes | Yes |
 | **Phylogenetic Models** | Yes | Yes | Yes |
