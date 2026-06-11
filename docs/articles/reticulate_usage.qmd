@@ -77,8 +77,6 @@ fit_numpyro <- because(
 # NumPyro time: 22.32 secs
 ```
 
-*Note: For extremely small datasets like this one (N=100), the initial JAX compilation overhead makes NumPyro appear slightly slower. However, as dataset size or model complexity increases, NumPyro scales exponentially better than JAGS.*
-
 ### Identical Estimates, Superior Efficiency
 
 Both engines arrive at mathematically equivalent parameter estimates, but NumPyro's NUTS sampler is vastly more efficient per-iteration. 
