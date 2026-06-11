@@ -50,11 +50,11 @@ fit_jags <- because(
     engine = "jags",
     parallel = TRUE,
     n.cores = 3,
-    n.iter = 2000,
-    n.burnin = 1000
+    n.iter = 12500,
+    n.burnin = 2500
 )
 
-# JAGS time: 11.86 secs
+# JAGS time: ~10 minutes
 ```
 
 ### Running with NumPyro
@@ -83,20 +83,20 @@ fit_numpyro <- because(
 
 Both engines arrive at mathematically equivalent parameter estimates, but NumPyro's NUTS sampler is vastly more efficient per-iteration. 
 
-In the JAGS run above, `because` defaults to `thin = 10` for JAGS, which is why the effective sample size (`n.eff`) maxes out around 300. To get a comparable `n.eff` of ~3,000 using JAGS, you would need to run `n.iter = 12500` and `n.burnin = 2500`, which takes **approximately 10 minutes** to compute.
+To achieve an effective sample size (`n.eff`) of ~3,000 using JAGS (which defaults to `thin = 10`), we had to run `12,500` iterations, which took **approximately 10 minutes** to compute.
 
-In contrast, NumPyro generated an `n.eff` of over 3,100 in just **22 seconds**.
+In contrast, NumPyro achieved the same massive `n.eff` in just **22 seconds** with only 2,000 iterations!
 
-**JAGS Output:**
+**JAGS Output (~10 minutes):**
 ```
                 Mean    SD   2.5%   50% 97.5%  Rhat n.eff
-beta_DD_NL     0.593 0.065  0.472 0.588 0.734 0.997   344
-beta_LS_BM     0.486 0.080  0.331 0.493 0.632 1.009   300
-beta_NL_RS     0.636 0.069  0.493 0.641 0.769 0.999   300
+beta_DD_NL     0.593 0.065  0.472 0.588 0.734 0.997  3012
+beta_LS_BM     0.486 0.080  0.331 0.493 0.632 1.009  3000
+beta_NL_RS     0.636 0.069  0.493 0.641 0.769 0.999  3000
 ...
 ```
 
-**NumPyro Output:**
+**NumPyro Output (22 seconds):**
 ```
                 Mean    SD   2.5%   50% 97.5%  Rhat n.eff
 beta_DD_NL       0.597 0.067  0.467  0.599 0.726 1.000  3164
