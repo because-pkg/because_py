@@ -81,7 +81,11 @@ fit_numpyro <- because(
 
 ### Identical Estimates, Superior Efficiency
 
-Both engines arrive at mathematically equivalent parameter estimates, but NumPyro's NUTS sampler is vastly more efficient per-iteration, resulting in massive Effective Sample Sizes (`n.eff`).
+Both engines arrive at mathematically equivalent parameter estimates, but NumPyro's NUTS sampler is vastly more efficient per-iteration. 
+
+In the JAGS run above, `because` defaults to `thin = 10` for JAGS, which is why the effective sample size (`n.eff`) maxes out around 300. To get a comparable `n.eff` of ~3,000 using JAGS, you would need to run `n.iter = 12500` and `n.burnin = 2500`, which takes **approximately 10 minutes** to compute.
+
+In contrast, NumPyro generated an `n.eff` of over 3,100 in just **22 seconds**.
 
 **JAGS Output:**
 ```
