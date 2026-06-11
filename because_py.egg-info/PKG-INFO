@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: because_py
-Version: 0.1.0
+Version: 0.2.0
 Summary: Python NumPyro backend for the R 'because' package
 Home-page: https://github.com/because-pkg/because_py
 Author: because-pkg
