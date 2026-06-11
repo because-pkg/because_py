@@ -39,88 +39,162 @@ sem8_eq <- list(
 
 ### Running with JAGS (Default)
 
-The default JAGS engine uses an optimised random-effect formulation with pre-calculated precision matrices, making it highly efficient for standard phylogenetic models.
+Let's start running the model with the default JAGS engine 
 
 ```{r}
+start.time <- Sys.time()
 fit_jags <- because(
     equations = sem8_eq,
     data = rhino.dat,
     structure = rhino.tree,
     id_col = "SP",
-    engine = "jags",
+    engine = "jags", #default, so you could also omit this argument
     parallel = TRUE,
     n.cores = 3,
-    n.iter = 12500,
-    n.burnin = 2500
+    n.chains = 3,
+    n.iter = 12500, 
+    n.burnin = 2500,
+    n.thin = 10 
 )
-
-# JAGS time: ~10 minutes
+time_diff <- Sys.time() - start.time
+time_diff
+# Time difference of 2.284368 mins
 ```
+*Note:* The above values for n.iter, n.burnin and n.thin are the default values for JAGS in the because package, and they were chosen to achieve an effective sample size of ~3,000 for all parameters (with 3 chains). 
 
 ### Running with NumPyro
 
 The NumPyro engine compiles the model to JAX, leveraging Just-In-Time (JIT) compilation and the highly efficient No-U-Turn Sampler (NUTS). 
 
 ```{r}
+start.time <- Sys.time()
 fit_numpyro <- because(
     equations = sem8_eq,
     data = rhino.dat,
     structure = rhino.tree,
     id_col = "SP",
-    engine = "numpyro",
+    engine = "numpyro", #switch to the NumPyro engine
     parallel = TRUE,
     n.cores = 3,
+    n.chains = 3,
     n.iter = 2000,
-    n.warmup = 1000
+    n.warmup = 1000,
+    n.thin = 1 #no thinning needed with numpyro
 )
-
-# NumPyro time: 22.32 secs
+time_diff2 <- Sys.time() - start.time
+time_diff2
+# Time difference of 19.33303 secs
 ```
+*Note:* The above values for n.iter, n.warmup and n.thin are the default values for NumPyro in the because package, and they were chosen to achieve an effective sample size of ~3,000 for all parameters (with 3 chains). The NumPyro engine does not require thinning due to the efficiency of the NUTS sampler, so `n.thin` is by default set to 1.
 
 ### Identical Estimates, Superior Efficiency
 
 Both engines arrive at mathematically equivalent parameter estimates, but NumPyro's NUTS sampler is vastly more efficient per-iteration. 
 
-To achieve an effective sample size (`n.eff`) of ~3,000 using JAGS (which defaults to `thin = 10`), we had to run `12,500` iterations, which took **approximately 10 minutes** to compute.
+To achieve an effective sample size (`n.eff`) of ~3,000 using JAGS (which defaults to `thin = 10`), we had to run `12,500` iterations, which took **approximately 137 seconds** to compute on a Macbook Air M2. with 24 GB RAM.
 
-In contrast, NumPyro achieved the same massive `n.eff` in just **22 seconds** with only 2,000 iterations!
+In contrast, NumPyro achieved the same massive `n.eff` in just **19 seconds** with only 2,000 iterations per chain!
 
-**JAGS Output (~10 minutes):**
+**JAGS Output (137 seconds):**
 ```
-                Mean    SD   2.5%   50% 97.5%  Rhat n.eff
-beta_DD_NL     0.593 0.065  0.472 0.588 0.734 0.997  3012
-beta_LS_BM     0.486 0.080  0.331 0.493 0.632 1.009  3000
-beta_NL_RS     0.636 0.069  0.493 0.641 0.769 0.999  3000
-...
+                 Mean    SD Naive SE Time-series SE   2.5%    50% 97.5%  Rhat n.eff
+alpha_DD        0.490 0.204    0.004          0.004  0.090  0.488 0.902 1.001  2915
+alpha_LS        0.516 0.343    0.006          0.010 -0.154  0.520 1.207 1.000  1310
+alpha_NL       -0.013 0.326    0.006          0.010 -0.671 -0.010 0.631 1.000  1015
+beta_DD_NL      0.589 0.066    0.001          0.001  0.462  0.590 0.716 1.001  3468
+beta_LS_BM      0.489 0.084    0.002          0.002  0.330  0.489 0.661 1.000  2718
+beta_NL_BM      0.400 0.071    0.001          0.001  0.262  0.400 0.536 1.000  2847
+beta_NL_RS      0.636 0.069    0.001          0.001  0.503  0.636 0.771 1.000  3452
+lambda_DD       0.198 0.135    0.002          0.003  0.011  0.175 0.498 1.000  1600
+lambda_LS       0.442 0.135    0.002          0.003  0.195  0.444 0.708 1.002  1733
+lambda_NL       0.549 0.115    0.002          0.003  0.304  0.556 0.753 1.000  2038
+sigma_DD_res    0.984 0.088    0.002          0.002  0.816  0.982 1.164 1.000  2586
+sigma_LS_res    1.065 0.111    0.002          0.002  0.861  1.058 1.293 1.001  2510
+sigma_NL_res    0.836 0.088    0.002          0.002  0.672  0.833 1.012 1.000  2882
+sigma_phylo_DD  0.467 0.202    0.004          0.005  0.110  0.457 0.884 1.000  1732
+sigma_phylo_LS  0.957 0.219    0.004          0.005  0.567  0.946 1.421 1.003  1752
+sigma_phylo_NL  0.936 0.170    0.003          0.004  0.625  0.929 1.293 1.000  1805
+sigma_total_DD  1.108 0.094    0.002          0.002  0.946  1.098 1.309 1.000  2609
+sigma_total_LS  1.447 0.134    0.002          0.003  1.219  1.433 1.737 1.002  2118
+sigma_total_NL  1.264 0.119    0.002          0.003  1.061  1.255 1.529 1.000  2160
 ```
 
-**NumPyro Output (22 seconds):**
+**NumPyro Output (19 seconds):**
 ```
-                Mean    SD   2.5%   50% 97.5%  Rhat n.eff
-beta_DD_NL       0.597 0.067  0.467  0.599 0.726 1.000  3164
-beta_LS_BM       0.486 0.086  0.315  0.485 0.661 1.000  3120
-beta_NL_RS       0.631 0.069  0.497  0.633 0.771 1.000  3250
-...
+                 Mean    SD Naive SE Time-series SE   2.5%    50% 97.5%  Rhat n.eff
+alpha_DD         0.477 0.188    0.003          0.004  0.118  0.472 0.859 1.002  2200
+alpha_LS         0.528 0.345    0.006          0.009 -0.150  0.517 1.260 1.003  1385
+alpha_NL        -0.020 0.333    0.006          0.010 -0.715 -0.015 0.639 1.000  1221
+beta_DD_NL       0.597 0.067    0.001          0.001  0.467  0.599 0.726 1.000  3164
+beta_LS_BM       0.486 0.086    0.002          0.002  0.315  0.485 0.661 1.000  3120
+beta_NL_BM       0.402 0.071    0.001          0.001  0.265  0.402 0.537 1.000  3079
+beta_NL_RS       0.631 0.069    0.001          0.001  0.497  0.633 0.771 1.000  3250
+lambda_DD_phylo  0.138 0.130    0.002          0.006  0.000  0.099 0.463 1.001   540
+lambda_LS_phylo  0.439 0.142    0.003          0.005  0.166  0.439 0.708 1.010   716
+lambda_NL_phylo  0.557 0.115    0.002          0.004  0.305  0.567 0.755 1.000   716
+sigma_DD         1.017 0.090    0.002          0.002  0.845  1.014 1.197 1.001  1431
+sigma_DD_phylo   0.362 0.222    0.004          0.010  0.018  0.336 0.853 1.001   538
+sigma_LS         1.075 0.117    0.002          0.003  0.863  1.071 1.317 1.006  1148
+sigma_LS_phylo   0.963 0.235    0.004          0.008  0.548  0.953 1.454 1.008   876
+sigma_NL         0.839 0.090    0.002          0.003  0.683  0.831 1.031 1.001  1194
+sigma_NL_phylo   0.955 0.173    0.003          0.006  0.630  0.951 1.309 1.000   866
 ```
+**A Note on Sampling Efficiency**: If you look closely at the outputs above, you will notice that while NumPyro generates massive effective sample sizes (n.eff) for the beta regression coefficients, JAGS appears slightly more efficient at sampling the variance components (sigma) and phylogenetic signals (lambda). This highlights a  difference in the respective samplers architecture: JAGS uses highly optimized, conjugate Gibbs updates for variance parameters, whereas NumPyro's NUTS (Hamiltonian Monte Carlo) uses gradient-based trajectories that must navigate complex geometries. However, because NumPyro's JAX compilation is so incredibly fast, it still generates more effective samples per second across the board. In this example, JAGS generates ~13 effective lambda samples per second and ~21.8 beta samples per second, while NumPyro generates ~34.5 effective lambda samples per second  and ~165.7 effective beta samples per second.
 
-## High-Performance `multiPhylo` Models
+## Including uncertainity in trees 
 
-NumPyro truly shines when handling phylogenetic uncertainty across multiple trees (`multiPhylo`). 
+NumPyro truly shines when handling more complex causal models, for example models that incorporate phylogenetic uncertainty across multiple trees (`multiPhylo`). 
 
-While JAGS struggles with indexing into large 3D arrays of precision matrices and evaluating the determinant dynamically at every MCMC step, `because_py` handles multiple trees using an advanced Rao-Blackwellization technique (`DiscreteHMCGibbs`). This marginalises out the discrete tree index and evaluates all trees simultaneously during the NUTS trajectory.
+While JAGS struggles with indexing into large 3D arrays of precision matrices and evaluating the determinant dynamically at every MCMC step, the `because_py` NumPyro engine implementation in `because`  handles multiple trees marginalising out the discrete tree index and evaluating all trees simultaneously during the NUTS trajectory using the `DiscreteHMCGibbs` sampler of `NumPyro`. This approach is orders of magnitude faster than the naive JAGS implementation, which requires a separate MCMC run for each tree.
+
+In the following example, we simulate 10 trees for the same 100 species and run the same model across all 10 trees simultaneously using again both the JAGS and the NumPyro engines.
 
 ```{r multi-phylo}
 # Simulate 10 trees for the 100 species using the 'ape' package
 library(ape)
+data(rhino.tree)
 set.seed(123)
-multi_tree <- rmtree(N = 10, n = 100)
+
+# Create an empty list to hold our trees
+trees_list <- list()
+
+# Generate 10 trees by perturbing the branch lengths of the original tree
+for(i in 1:10) {
+  perturbed_tree <- rhino.tree
+  
+  # Multiply each branch length by a random value between 0.8 and 1.2 (+/- 20% noise)
+  noise <- runif(length(perturbed_tree$edge.length), min = 0.8, max = 1.2)
+  perturbed_tree$edge.length <- perturbed_tree$edge.length * noise
+  
+  trees_list[[i]] <- perturbed_tree
+}
+
+# Convert the list to a formal multiPhylo object
+multi_tree <- structure(trees_list, class = "multiPhylo")
 
 # Assign the exact same species names to the tips of our simulated trees
 for (i in 1:10) {
   multi_tree[[i]]$tip.label <- rhino.tree$tip.label
 }
 
-# Run the model across all 10 trees simultaneously
+#run the multi tree model using JAGS (this will be very slow)
+
+system.time <- Sys.time()
+fit_multi_numpyro <- because(
+    equations = sem8_eq,
+    data = rhino.dat,
+    structure = multi_tree,
+    id_col = "SP",
+    engine = "jags",
+    parallel = TRUE,
+    n.cores = 3,
+)
+time_diff_multi_jg <- Sys.time() - system.time
+time_diff_multi_jg
+# Time difference of 9.70127 mins
+
+#Now run the same multi-tree model using the NumPyro engine (this will be very fast) 
+system.time <- Sys.time()
 fit_multi_numpyro <- because(
     equations = sem8_eq,
     data = rhino.dat,
@@ -129,11 +203,10 @@ fit_multi_numpyro <- because(
     engine = "numpyro",
     parallel = TRUE,
     n.cores = 3,
-    n.iter = 1000,
-    n.warmup = 500
 )
-
-# NumPyro time: 11.54 secs
+time_diff_multi_py <- Sys.time() - system.time
+time_diff_multi_py
+# Time difference of 21.40381 secs
 ```
 
 ## Engine Feature Comparison
@@ -142,7 +215,7 @@ The `because` R package abstracts the underlying sampler so you can easily switc
 
 | Feature | JAGS (Default) | NIMBLE | NumPyro (Python) |
 | :--- | :--- | :--- | :--- |
-| **Distributions** | Gaussian, Poisson, Binomial, NegBinomial, ZI, Gamma, Beta, etc. | Extensive | Gaussian, Poisson, Binomial, NegBinomial, ZI |
+| **Distributions** |Gaussian, Poisson, Binomial, NegBinomial, ZIP, ZINB, Ordinal, Multinomial | As JAGS | As JAGS |
 | **d-separation testing** | Yes | Yes | Yes |
 | **Latent variables (MAGs)** | Yes | Yes | Yes |
 | **Interaction terms** | Yes | Yes | Yes |
@@ -160,7 +233,7 @@ The `because` R package abstracts the underlying sampler so you can easily switc
 
 ## Inspecting the generated NumPyro model code
 
-A unique feature of because-py is that the generated NumPyro model is stored as an executable Python string:
+The generated NumPyro model is stored as an executable Python string:
 
 ```{r inspect-code}
 cat(fit_numpyro$numpyro_code)
