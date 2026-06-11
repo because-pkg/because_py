@@ -66,6 +66,7 @@ class NumPyroBuilder:
             N = len(next(iter(data.values()))) if data else 1
             
             shared_state = {}
+            local_pinned_latents = set()
             
             for var in topo_order:
                 # 1. Deterministic Node Evaluation
@@ -178,14 +179,14 @@ class NumPyroBuilder:
                 for pred in eq["fixed"]:
                     # Latent variable identification logic
                     is_pred_latent = pred not in data and pred not in det_terms
-                    if is_pred_latent and pred not in self.pinned_latents:
+                    if is_pred_latent and pred not in local_pinned_latents:
                         if self.fix_latent == "loading":
                             beta = 1.0
                         elif self.fix_latent == "sign":
                             beta = numpyro.sample(f"beta_{var}_{pred}", dist.TruncatedNormal(loc=0.0, scale=10.0, low=0.0))
                         else:
                             beta = numpyro.sample(f"beta_{var}_{pred}", dist.Normal(0, 10))
-                        self.pinned_latents.add(pred)
+                        local_pinned_latents.add(pred)
                     else:
                         beta = numpyro.sample(f"beta_{var}_{pred}", dist.Normal(0, 10))
                     
