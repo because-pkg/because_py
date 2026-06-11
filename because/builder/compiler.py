@@ -4,13 +4,15 @@ class NumPyroBuilder:
     """
     Takes a parsed causal graph and generates the dynamic NumPyro model via a closure.
     """
-    def __init__(self, causal_graph, family_dict=None, deterministic_terms=None, cor_matrices=None, fix_latent="loading"):
+    def __init__(self, causal_graph, family_dict=None, deterministic_terms=None, cor_matrices=None, fix_latent="loading", induced_correlations=None):
         """
         :param causal_graph: The compiled CausalGraph object.
         :param family_dict: Dictionary specifying families (e.g. {"y": "poisson"}). Default is "gaussian".
         :param deterministic_terms: Dictionary of deterministic terms.
         :param cor_matrices: Dictionary mapping grouping variable names to their covariance/correlation matrices.
         :param fix_latent: Method for anchoring latents: 'loading' or 'sign'.
+        :param induced_correlations: List of variable-pair lists/tuples for MAG induced correlations.
+            e.g. [["Brain", "Mass"]] means Brain and Mass share a correlated residual.
         """
         self.graph = causal_graph
         self.parsed_equations = {eq["response"]: eq for eq in causal_graph.parsed_equations.values() if eq["response"]}
@@ -19,6 +21,8 @@ class NumPyroBuilder:
         self.cor_matrices = cor_matrices or {}
         self.fix_latent = fix_latent
         self.pinned_latents = set()
+        # Normalise to list-of-lists (R may pass as list of character vectors)
+        self.induced_correlations = [list(pair) for pair in induced_correlations] if induced_correlations else []
 
     def generate_model_function(self, data_for_compilation=None, force_plate_obs=False):
         """
@@ -52,6 +56,9 @@ class NumPyroBuilder:
             for v in cor_mats.values()
         )
         
+        # Capture induced correlations for closure
+        induced_correlations_closure = self.induced_correlations
+        
         def numpyro_model(**kwargs):
             data = kwargs.copy()
             import numpyro
@@ -67,6 +74,51 @@ class NumPyroBuilder:
             
             shared_state = {}
             local_pinned_latents = set()
+            
+            # --- MAG Induced Correlations (latent_method = "correlation") ---
+            # For each correlated pair we:
+            #   1. Place an LKJCholesky(2) prior on the 2x2 correlation matrix
+            #      (equivalent to JAGS dwish prior).
+            #   2. Build the 2x2 covariance from two HalfNormal scale parameters.
+            #   3. Sample correlated residuals via MultivariateNormal.
+            #   4. Register rho as a deterministic node.
+            # The residuals are stored in `induced_err` and added to mu later.
+            induced_err = {}   # var -> jnp array of shape (N,)
+            ind_cor_pairs = induced_correlations_closure  # captured from outer scope
+            for pair in ind_cor_pairs:
+                var1, var2 = pair[0], pair[1]
+                pair_tag = f"{var1}_{var2}"
+                
+                # --- LKJ prior on 2x2 correlation matrix (~ Wishart in JAGS) ---
+                L_corr = numpyro.sample(
+                    f"L_corr_{pair_tag}",
+                    dist.LKJCholesky(2, concentration=1.0)
+                )
+                # Reconstruct full correlation matrix to extract rho cleanly
+                corr_mat = L_corr @ L_corr.T
+                
+                # --- Scale parameters (residual SDs for each variable) ---
+                sigma_res1 = numpyro.sample(f"sigma_res_{var1}_{var2}", dist.HalfNormal(1.0))
+                sigma_res2 = numpyro.sample(f"sigma_res_{var2}_{var1}", dist.HalfNormal(1.0))
+                scale_diag = jnp.array([sigma_res1, sigma_res2])
+                
+                # Build full covariance: Sigma = diag(scale) @ corr @ diag(scale)
+                cov_mat = jnp.outer(scale_diag, scale_diag) * corr_mat
+                
+                # --- Deterministic rho (same meaning as JAGS rho_var1_var2) ---
+                numpyro.deterministic(f"rho_{pair_tag}", corr_mat[1, 0])
+                
+                # --- Sample correlated residuals from bivariate normal ---
+                mvn = dist.MultivariateNormal(
+                    loc=jnp.zeros(2),
+                    covariance_matrix=cov_mat
+                )
+                with numpyro.plate(f"err_res_{pair_tag}_plate", N):
+                    err_res = numpyro.sample(f"err_res_{pair_tag}", mvn)
+                
+                # Store per-variable residuals (column 0 -> var1, column 1 -> var2)
+                induced_err[var1] = induced_err.get(var1, jnp.zeros(N)) + err_res[:, 0]
+                induced_err[var2] = induced_err.get(var2, jnp.zeros(N)) + err_res[:, 1]
             
             for var in topo_order:
                 # 1. Deterministic Node Evaluation
@@ -354,6 +406,10 @@ class NumPyroBuilder:
                     # Store for lambda calculation
                     if group_name in custom_transforms or group_name in L_matrices:
                         sigma_struct_dict[group_name] = sigma_group
+                
+                # --- Add induced correlation residual to mu (MAG approach) ---
+                if var in induced_err:
+                    mu = mu + induced_err[var]
                 
                 # --- Distribution Dispatcher ---
                 if family == "gaussian":

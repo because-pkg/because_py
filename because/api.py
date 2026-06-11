@@ -16,7 +16,7 @@ def get_dsep_equations(equations, latent=None):
     graph.build()
     return graph.generate_dsep_equations(latent=latent)
 
-def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False, dsep_only=False, calculate_waic=False, num_samples=1000, num_warmup=500, num_chains=1, thinning=1, n_cores=1, seed=0, dsep_max_obs=2000, quiet=False, dsep_equations_to_run=None, adapt_delta=0.95, fix_latent="loading"):
+def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_correlations=None, dsep=False, dsep_only=False, calculate_waic=False, num_samples=1000, num_warmup=500, num_chains=1, thinning=1, n_cores=1, seed=0, dsep_max_obs=2000, quiet=False, dsep_equations_to_run=None, adapt_delta=0.95, fix_latent="loading"):
     """
     High-level API for because-py. Fits a causal hierarchical model using NumPyro.
     
@@ -77,7 +77,7 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False
         print(f"   Unobserved stochastic nodes: {unobserved}")
         print("\nInitializing model")
         
-    compiler = NumPyroBuilder(graph, family_dict=family, deterministic_terms=deterministic_terms, cor_matrices=cor_matrices, fix_latent=fix_latent)
+    compiler = NumPyroBuilder(graph, family_dict=family, deterministic_terms=deterministic_terms, cor_matrices=cor_matrices, fix_latent=fix_latent, induced_correlations=induced_correlations)
     model_func = compiler.generate_model_function(data_for_compilation=data)
     # Generate human-readable Python source for inspection / because_continue()
     try:
