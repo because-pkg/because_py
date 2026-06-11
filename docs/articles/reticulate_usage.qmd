@@ -7,7 +7,7 @@ execute:
   eval: false
 ---
 
-```{r setup}
+```r
 #| include: false
 library(because)
 library(because.phybase)
@@ -23,7 +23,7 @@ The workflow is identical to a JAGS run: same formula syntax, same `summary()` a
 
 To demonstrate the speed advantages of the NumPyro engine, we will run the phylogenetic structural equation model (Model 8) from von Hardenberg and Gonzalez-Voyer (2025) using the Rhinogradentia dataset.
 
-```{r}
+```r
 library(because)
 library(because.phybase)
 
@@ -41,7 +41,7 @@ sem8_eq <- list(
 
 Let's start running the model with the default JAGS engine 
 
-```{r}
+```r
 start.time <- Sys.time()
 fit_jags <- because(
     equations = sem8_eq,
@@ -66,7 +66,7 @@ time_diff
 
 The NumPyro engine compiles the model to JAX, leveraging Just-In-Time (JIT) compilation and the highly efficient No-U-Turn Sampler (NUTS). 
 
-```{r}
+```r
 start.time <- Sys.time()
 fit_numpyro <- because(
     equations = sem8_eq,
@@ -149,7 +149,7 @@ While JAGS struggles with indexing into large 3D arrays of precision matrices an
 
 In the following example, we simulate 10 trees for the same 100 species and run the same model across all 10 trees simultaneously using again both the JAGS and the NumPyro engines.
 
-```{r multi-phylo}
+```r
 # Simulate 10 trees for the 100 species using the 'ape' package
 library(ape)
 data(rhino.tree)
@@ -235,7 +235,7 @@ The `because` R package abstracts the underlying sampler so you can easily switc
 
 The generated NumPyro model is stored as an executable Python string:
 
-```{r inspect-code}
+```r
 cat(fit_numpyro$numpyro_code)
 ```
 
