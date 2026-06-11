@@ -9,6 +9,8 @@ Requires-Dist: numpyro
 Requires-Dist: jax
 Requires-Dist: jaxlib
 Requires-Dist: numpy
+Requires-Dist: networkx
+Requires-Dist: funsor
 Dynamic: author
 Dynamic: home-page
 Dynamic: requires-dist

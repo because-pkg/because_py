@@ -76,49 +76,43 @@ class NumPyroBuilder:
             local_pinned_latents = set()
             
             # --- MAG Induced Correlations (latent_method = "correlation") ---
-            # For each correlated pair we:
-            #   1. Place an LKJCholesky(2) prior on the 2x2 correlation matrix
-            #      (equivalent to JAGS dwish prior).
-            #   2. Build the 2x2 covariance from two HalfNormal scale parameters.
-            #   3. Sample correlated residuals via MultivariateNormal.
-            #   4. Register rho as a deterministic node.
-            # The residuals are stored in `induced_err` and added to mu later.
-            induced_err = {}   # var -> jnp array of shape (N,)
-            ind_cor_pairs = induced_correlations_closure  # captured from outer scope
+            # JAGS-correct formulation: variables in induced correlations have NO
+            # separate sigma.  Their variance is entirely captured by the MVN.
+            # Phase 1 (here): sample LKJ correlation + scale parameters and store
+            #   the resulting covariance matrices.
+            # Phase 2 (after variable loop): score (obs - structural_mu) residuals
+            #   jointly against each pair's bivariate normal.
+            #
+            # This mirrors JAGS exactly:
+            #   err_res[i,1:2] ~ dmnorm(0, TAU_res)  <- the only likelihood for var1/var2
+            #   var1[i] ~ dnorm(mu_var1[i], <skipped>) <- standard sigma block is skipped
+            induced_mvn_storage = {}   # pair_tag -> {cov_mat, var1, var2}
+            induced_cor_set    = set() # all variables involved in any induced correlation
+            induced_mus        = {}    # var -> mu array (filled during variable loop)
+            ind_cor_pairs = induced_correlations_closure
             for pair in ind_cor_pairs:
                 var1, var2 = pair[0], pair[1]
                 pair_tag = f"{var1}_{var2}"
+                induced_cor_set.add(var1)
+                induced_cor_set.add(var2)
                 
-                # --- LKJ prior on 2x2 correlation matrix (~ Wishart in JAGS) ---
+                # --- LKJ prior on 2x2 correlation matrix (equivalent to JAGS dwish) ---
                 L_corr = numpyro.sample(
                     f"L_corr_{pair_tag}",
                     dist.LKJCholesky(2, concentration=1.0)
                 )
-                # Reconstruct full correlation matrix to extract rho cleanly
                 corr_mat = L_corr @ L_corr.T
                 
-                # --- Scale parameters (residual SDs for each variable) ---
+                # --- Scale parameters (marginal residual SDs for each variable) ---
                 sigma_res1 = numpyro.sample(f"sigma_res_{var1}_{var2}", dist.HalfNormal(1.0))
                 sigma_res2 = numpyro.sample(f"sigma_res_{var2}_{var1}", dist.HalfNormal(1.0))
                 scale_diag = jnp.array([sigma_res1, sigma_res2])
-                
-                # Build full covariance: Sigma = diag(scale) @ corr @ diag(scale)
-                cov_mat = jnp.outer(scale_diag, scale_diag) * corr_mat
+                cov_mat    = jnp.outer(scale_diag, scale_diag) * corr_mat
                 
                 # --- Deterministic rho (same meaning as JAGS rho_var1_var2) ---
                 numpyro.deterministic(f"rho_{pair_tag}", corr_mat[1, 0])
                 
-                # --- Sample correlated residuals from bivariate normal ---
-                mvn = dist.MultivariateNormal(
-                    loc=jnp.zeros(2),
-                    covariance_matrix=cov_mat
-                )
-                with numpyro.plate(f"err_res_{pair_tag}_plate", N):
-                    err_res = numpyro.sample(f"err_res_{pair_tag}", mvn)
-                
-                # Store per-variable residuals (column 0 -> var1, column 1 -> var2)
-                induced_err[var1] = induced_err.get(var1, jnp.zeros(N)) + err_res[:, 0]
-                induced_err[var2] = induced_err.get(var2, jnp.zeros(N)) + err_res[:, 1]
+                induced_mvn_storage[pair_tag] = {"cov_mat": cov_mat, "var1": var1, "var2": var2}
             
             for var in topo_order:
                 # 1. Deterministic Node Evaluation
@@ -407,9 +401,14 @@ class NumPyroBuilder:
                     if group_name in custom_transforms or group_name in L_matrices:
                         sigma_struct_dict[group_name] = sigma_group
                 
-                # --- Add induced correlation residual to mu (MAG approach) ---
-                if var in induced_err:
-                    mu = mu + induced_err[var]
+                # --- MAG: if var is in an induced correlation pair, skip sigma +
+                # likelihood entirely.  Store mu so the post-loop block can compute
+                # the residual (obs - mu) and score it against the pair's MVN.
+                if var in induced_cor_set and obs_data is not None and not is_latent:
+                    induced_mus[var] = mu
+                    # Downstream nodes see the actual observations, not a sampled value
+                    computed_vars[var] = obs_data
+                    continue  # skip sigma sampling and Normal likelihood
                 
                 # --- Distribution Dispatcher ---
                 if family == "gaussian":
@@ -493,12 +492,30 @@ class NumPyroBuilder:
                     else:
                         raise ValueError(f"Family '{family}' is not supported.")
                     
-                    with numpyro.plate(f"{var}_imputed_plate", missing_idx.shape[0]):
-                        unobs = numpyro.sample(f"{var}_imputed", dist_imputed)
-                    with numpyro.plate(f"{var}_observed_plate", obs_idx.shape[0]):
-                        obs_samp = numpyro.sample(f"{var}_observed", dist_obs, obs=obs_data[obs_idx])
+                    if has_multiPhylo and not force_plate_obs:
+                        # multiPhylo + NaN path:
+                        # DiscreteHMCGibbs requires a scalar log_prob (to_event(1)).
+                        # We sample imputed values as free latent variables (no obs=),
+                        # and score only the observed rows with to_event(1).
+                        # This correctly marginalizes out the missing values while
+                        # keeping the discrete tree index integrable by Gibbs.
+                        unobs = numpyro.sample(
+                            f"{var}_imputed",
+                            dist_imputed.to_event(1)   # latent, no obs constraint
+                        )
+                        numpyro.sample(
+                            f"{var}_observed",
+                            dist_obs.to_event(1),      # scalar log_prob for Gibbs
+                            obs=obs_data[obs_idx]
+                        )
+                    else:
+                        # Standard NaN path: two independent plates
+                        with numpyro.plate(f"{var}_imputed_plate", missing_idx.shape[0]):
+                            unobs = numpyro.sample(f"{var}_imputed", dist_imputed)
+                        with numpyro.plate(f"{var}_observed_plate", obs_idx.shape[0]):
+                            numpyro.sample(f"{var}_observed", dist_obs, obs=obs_data[obs_idx])
                     
-                    # Merge back together
+                    # Merge observed + imputed into a complete vector for downstream nodes
                     sampled_var = jnp.where(jnp.isnan(obs_data), 0.0, obs_data)
                     sampled_var = sampled_var.at[missing_idx].set(unobs)
                 else:
@@ -519,6 +536,42 @@ class NumPyroBuilder:
                         sampled_var = numpyro.sample(var, distribution, obs=obs_data)
                     
                 computed_vars[var] = sampled_var
+            
+            # ----------------------------------------------------------------
+            # MAG Induced Correlations - Phase 2: score residuals against MVN
+            # ----------------------------------------------------------------
+            # For each pair, the JAGS-equivalent likelihood is:
+            #   (obs_var1[i] - mu_var1[i], obs_var2[i] - mu_var2[i]) ~ MVN(0, Sigma)
+            # This is the ONLY variance source for induced-correlation variables.
+            for pair_tag, pair_info in induced_mvn_storage.items():
+                var1     = pair_info["var1"]
+                var2     = pair_info["var2"]
+                cov_mat  = pair_info["cov_mat"]
+                
+                mu1  = induced_mus.get(var1, jnp.zeros(N))
+                mu2  = induced_mus.get(var2, jnp.zeros(N))
+                obs1 = data.get(var1)
+                obs2 = data.get(var2)
+                
+                if obs1 is not None and obs2 is not None:
+                    resid1      = obs1 - mu1                            # shape (N,)
+                    resid2      = obs2 - mu2                            # shape (N,)
+                    joint_resid = jnp.stack([resid1, resid2], axis=-1) # shape (N, 2)
+                    
+                    mvn = dist.MultivariateNormal(
+                        loc=jnp.zeros(2),
+                        covariance_matrix=cov_mat
+                    )
+                    if has_multiPhylo and not force_plate_obs:
+                        # DiscreteHMCGibbs needs a scalar log_prob: use to_event
+                        numpyro.sample(
+                            f"resid_{pair_tag}",
+                            mvn.expand([N]).to_event(1),
+                            obs=joint_resid
+                        )
+                    else:
+                        with numpyro.plate(f"resid_{pair_tag}_plate", N):
+                            numpyro.sample(f"resid_{pair_tag}", mvn, obs=joint_resid)
         
         return numpyro_model
 

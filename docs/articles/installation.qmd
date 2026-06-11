@@ -4,7 +4,7 @@ title: "Installation & Setup"
 
 ## Installing because-py
 
-because-py is the Python NumPyro backend for the R [`because`](https://because-pkg.github.io/because/) package.
+because-py is the Python NumPyro backend for the R [`because`](https://because-pkg.github.io) package.
 It can be used from R (the recommended approach) or directly in Python.
 
 ---
@@ -15,7 +15,7 @@ It can be used from R (the recommended approach) or directly in Python.
 
 ```r
 # Stable release
-remotes::install_github("because-pkg/because@v1.3.1", build_vignettes = TRUE)
+remotes::install_github("because-pkg/because@v1.3.0", build_vignettes = TRUE)
 
 # Latest development version
 remotes::install_github("because-pkg/because", build_vignettes = TRUE)
@@ -39,24 +39,33 @@ reticulate::install_miniconda()
 ### Step 4 — One-step setup
 
 `because` provides a built-in helper that installs all required Python packages
-(`numpyro`, `jax`, `jaxlib`, and `because_py`) into a dedicated, isolated Python environment:
+(`numpyro`, `jax`, `jaxlib`, `networkx`, `funsor`, and `because_py`) into your
+active Python environment:
 
 ```r
 install_because_numpyro()
 ```
 
-The function automatically creates an environment named `"because_env"`. From then on, R will automatically detect and bind to this isolated environment silently in the background whenever you run a model, completely shielding you from any cross-package contamination.
+The function automatically detects your active Python environment — including
+RStudio project-level virtual environments (`.venv`) and any existing `reticulate`
+configuration — falling back to `"r-reticulate"` if none is found.
 
 ### Troubleshooting: wrong Python environment
 
-The `because` package automatically binds to `"because_env"` silently in the background. However, if your RStudio setup blocks automatic detection and throws a "Failed to import python module" error, you can manually point R to the correct environment by putting this at the very top of your script (before calling `library(because)`):
+If in a fresh R session `reticulate` picks up a different Python environment than
+the one where the packages were installed, `because` will throw:
+
+```
+Error: Failed to import python module 'because.api'.
+Python is currently running from: /path/to/wrong/python
+Ensure because_py is installed in this exact environment.
+Try running: install_because_numpyro()
+```
+
+In this case, point `reticulate` to the correct environment before calling `because()`:
 
 ```r
-# If you installed via standard Python:
-reticulate::use_virtualenv("because_env", required = TRUE)
-
-# If you installed via Miniconda/Anaconda:
-reticulate::use_condaenv("because_env", required = TRUE)
+reticulate::use_virtualenv("r-reticulate", required = TRUE)
 ```
 
 ---
