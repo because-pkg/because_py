@@ -101,22 +101,25 @@ class NumPyroBuilder:
                 sigma_res1 = numpyro.sample(f"sigma_res_{var1}_{var2}", dist.HalfNormal(1.0))
                 sigma_res2 = numpyro.sample(f"sigma_res_{var2}_{var1}", dist.HalfNormal(1.0))
                 scale_diag = jnp.array([sigma_res1, sigma_res2])
-                cov_mat    = jnp.outer(scale_diag, scale_diag) * corr_mat
+                
+                # --- Non-Centered Parameterization (NCP) for latent MVN errors ---
+                # L_cov is the lower Cholesky factor of the covariance matrix
+                L_cov = scale_diag[:, None] * L_corr
                 
                 # --- Deterministic rho (same meaning as JAGS rho_var1_var2) ---
-                numpyro.deterministic(f"rho_{pair_tag}", corr_mat[1, 0])
-                
-                mvn = dist.MultivariateNormal(loc=jnp.zeros(2), covariance_matrix=cov_mat)
+                numpyro.deterministic(f"rho_{pair_tag}", L_corr[1, 0])
                 
                 if has_multiPhylo and not force_plate_obs:
                     # DiscreteHMCGibbs needs a scalar log_prob: use to_event
-                    err = numpyro.sample(
-                        f"err_res_{pair_tag}",
-                        mvn.expand([N]).to_event(1)
+                    z_err = numpyro.sample(
+                        f"z_err_{pair_tag}",
+                        dist.Normal(0, 1).expand([N, 2]).to_event(2)
                     )
                 else:
-                    with numpyro.plate(f"err_res_{pair_tag}_plate", N):
-                        err = numpyro.sample(f"err_res_{pair_tag}", mvn)
+                    with numpyro.plate(f"err_res_{pair_tag}_plate", N, dim=-1):
+                        z_err = numpyro.sample(f"z_err_{pair_tag}", dist.Normal(0, 1).expand([2]).to_event(1))
+                        
+                err = numpyro.deterministic(f"err_res_{pair_tag}", jnp.dot(z_err, L_cov.T))
                         
                 if var1 not in induced_err_storage:
                     induced_err_storage[var1] = []
@@ -222,9 +225,13 @@ class NumPyroBuilder:
                     target_size = N # fallback
                     
                 if not eq:
-                    # Exogenous observed variable, just store it
-                    computed_vars[var] = obs_data
-                    continue
+                    if var not in induced_cor_set:
+                        # Exogenous observed variable, just store it
+                        computed_vars[var] = obs_data
+                        continue
+                    else:
+                        # Exogenous variable in an induced correlation MUST be modeled
+                        eq = {"intercept": True, "fixed": [], "random": []}
                     
                 # --- Endogenous Variable ---
                 
@@ -624,14 +631,15 @@ class NumPyroBuilder:
                 lines.append(f"{ind()}sigma_res_{var1}_{var2} = numpyro.sample('sigma_res_{var1}_{var2}', dist.HalfNormal(1.0))")
                 lines.append(f"{ind()}sigma_res_{var2}_{var1} = numpyro.sample('sigma_res_{var2}_{var1}', dist.HalfNormal(1.0))")
                 lines.append(f"{ind()}scale_diag_{pair_tag} = jnp.array([sigma_res_{var1}_{var2}, sigma_res_{var2}_{var1}])")
-                lines.append(f"{ind()}cov_mat_{pair_tag} = jnp.outer(scale_diag_{pair_tag}, scale_diag_{pair_tag}) * corr_mat_{pair_tag}")
-                lines.append(f"{ind()}numpyro.deterministic('rho_{pair_tag}', corr_mat_{pair_tag}[1, 0])")
-                lines.append(f"{ind()}mvn_{pair_tag} = dist.MultivariateNormal(loc=jnp.zeros(2), covariance_matrix=cov_mat_{pair_tag})")
+                lines.append(f"{ind()}L_cov_{pair_tag} = scale_diag_{pair_tag}[:, None] * L_corr_{pair_tag}")
+                lines.append(f"{ind()}numpyro.deterministic('rho_{pair_tag}', L_corr_{pair_tag}[1, 0])")
+                
                 if hasattr(self, "has_multiPhylo") and self.has_multiPhylo and not getattr(self, "force_plate_obs", False):
-                    lines.append(f"{ind()}err_res_{pair_tag} = numpyro.sample('err_res_{pair_tag}', mvn_{pair_tag}.expand([N]).to_event(1))")
+                    lines.append(f"{ind()}z_err_{pair_tag} = numpyro.sample('z_err_{pair_tag}', dist.Normal(0, 1).expand([N, 2]).to_event(2))")
                 else:
-                    lines.append(f"{ind()}with numpyro.plate('err_res_{pair_tag}_plate', N):")
-                    lines.append(f"{ind(2)}err_res_{pair_tag} = numpyro.sample('err_res_{pair_tag}', mvn_{pair_tag})")
+                    lines.append(f"{ind()}with numpyro.plate('err_res_{pair_tag}_plate', N, dim=-1):")
+                    lines.append(f"{ind(2)}z_err_{pair_tag} = numpyro.sample('z_err_{pair_tag}', dist.Normal(0, 1).expand([2]).to_event(1))")
+                lines.append(f"{ind()}err_res_{pair_tag} = numpyro.deterministic('err_res_{pair_tag}', jnp.dot(z_err_{pair_tag}, L_cov_{pair_tag}.T))")
             lines.append("")
 
         for var in topo_order:
@@ -650,9 +658,12 @@ class NumPyroBuilder:
             lines.append(f"{ind()}# --- {var}  (family: {family}) ---")
 
             if not eq:
-                lines.append(f"{ind()}computed_vars['{var}'] = {var}  # exogenous observed")
-                lines.append("")
-                continue
+                if var not in induced_cor_set:
+                    lines.append(f"{ind()}computed_vars['{var}'] = {var}  # exogenous observed")
+                    lines.append("")
+                    continue
+                else:
+                    eq = {"intercept": True, "fixed": [], "random": []}
 
             lines.append(f"{ind()}mu_{var} = jnp.zeros(N)")
 
