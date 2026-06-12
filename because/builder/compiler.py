@@ -76,19 +76,13 @@ class NumPyroBuilder:
             local_pinned_latents = set()
             
             # --- MAG Induced Correlations (latent_method = "correlation") ---
-            # JAGS-correct formulation: variables in induced correlations have NO
-            # separate sigma.  Their variance is entirely captured by the MVN.
-            # Phase 1 (here): sample LKJ correlation + scale parameters and store
-            #   the resulting covariance matrices.
-            # Phase 2 (after variable loop): score (obs - structural_mu) residuals
-            #   jointly against each pair's bivariate normal.
-            #
-            # This mirrors JAGS exactly:
-            #   err_res[i,1:2] ~ dmnorm(0, TAU_res)  <- the only likelihood for var1/var2
-            #   var1[i] ~ dnorm(mu_var1[i], <skipped>) <- standard sigma block is skipped
-            induced_mvn_storage = {}   # pair_tag -> {cov_mat, var1, var2}
+            # To correctly model variables involved in induced correlations, we sample
+            # latent residual vectors from a MVN and ADD them to the structural mean (mu)
+            # of the respective variables. The variables then retain their independent
+            # Gaussian likelihoods (sigma), which allows robust inference even when a
+            # variable is part of multiple correlations.
+            induced_err_storage = {}   # var -> list of latent error arrays
             induced_cor_set    = set() # all variables involved in any induced correlation
-            induced_mus        = {}    # var -> mu array (filled during variable loop)
             ind_cor_pairs = induced_correlations_closure
             for pair in ind_cor_pairs:
                 var1, var2 = pair[0], pair[1]
@@ -112,7 +106,25 @@ class NumPyroBuilder:
                 # --- Deterministic rho (same meaning as JAGS rho_var1_var2) ---
                 numpyro.deterministic(f"rho_{pair_tag}", corr_mat[1, 0])
                 
-                induced_mvn_storage[pair_tag] = {"cov_mat": cov_mat, "var1": var1, "var2": var2}
+                mvn = dist.MultivariateNormal(loc=jnp.zeros(2), covariance_matrix=cov_mat)
+                
+                if has_multiPhylo and not force_plate_obs:
+                    # DiscreteHMCGibbs needs a scalar log_prob: use to_event
+                    err = numpyro.sample(
+                        f"err_res_{pair_tag}",
+                        mvn.expand([N]).to_event(1)
+                    )
+                else:
+                    with numpyro.plate(f"err_res_{pair_tag}_plate", N):
+                        err = numpyro.sample(f"err_res_{pair_tag}", mvn)
+                        
+                if var1 not in induced_err_storage:
+                    induced_err_storage[var1] = []
+                induced_err_storage[var1].append(err[..., 0])
+                
+                if var2 not in induced_err_storage:
+                    induced_err_storage[var2] = []
+                induced_err_storage[var2].append(err[..., 1])
             
             for var in topo_order:
                 # 1. Deterministic Node Evaluation
@@ -401,14 +413,10 @@ class NumPyroBuilder:
                     if group_name in custom_transforms or group_name in L_matrices:
                         sigma_struct_dict[group_name] = sigma_group
                 
-                # --- MAG: if var is in an induced correlation pair, skip sigma +
-                # likelihood entirely.  Store mu so the post-loop block can compute
-                # the residual (obs - mu) and score it against the pair's MVN.
-                if var in induced_cor_set and obs_data is not None and not is_latent:
-                    induced_mus[var] = mu
-                    # Downstream nodes see the actual observations, not a sampled value
-                    computed_vars[var] = obs_data
-                    continue  # skip sigma sampling and Normal likelihood
+                # Add any latent induced correlation errors to the structural mean
+                if var in induced_err_storage:
+                    for err in induced_err_storage[var]:
+                        mu = mu + err
                 
                 # --- Distribution Dispatcher ---
                 if family == "gaussian":
@@ -537,41 +545,7 @@ class NumPyroBuilder:
                     
                 computed_vars[var] = sampled_var
             
-            # ----------------------------------------------------------------
-            # MAG Induced Correlations - Phase 2: score residuals against MVN
-            # ----------------------------------------------------------------
-            # For each pair, the JAGS-equivalent likelihood is:
-            #   (obs_var1[i] - mu_var1[i], obs_var2[i] - mu_var2[i]) ~ MVN(0, Sigma)
-            # This is the ONLY variance source for induced-correlation variables.
-            for pair_tag, pair_info in induced_mvn_storage.items():
-                var1     = pair_info["var1"]
-                var2     = pair_info["var2"]
-                cov_mat  = pair_info["cov_mat"]
-                
-                mu1  = induced_mus.get(var1, jnp.zeros(N))
-                mu2  = induced_mus.get(var2, jnp.zeros(N))
-                obs1 = data.get(var1)
-                obs2 = data.get(var2)
-                
-                if obs1 is not None and obs2 is not None:
-                    resid1      = obs1 - mu1                            # shape (N,)
-                    resid2      = obs2 - mu2                            # shape (N,)
-                    joint_resid = jnp.stack([resid1, resid2], axis=-1) # shape (N, 2)
-                    
-                    mvn = dist.MultivariateNormal(
-                        loc=jnp.zeros(2),
-                        covariance_matrix=cov_mat
-                    )
-                    if has_multiPhylo and not force_plate_obs:
-                        # DiscreteHMCGibbs needs a scalar log_prob: use to_event
-                        numpyro.sample(
-                            f"resid_{pair_tag}",
-                            mvn.expand([N]).to_event(1),
-                            obs=joint_resid
-                        )
-                    else:
-                        with numpyro.plate(f"resid_{pair_tag}_plate", N):
-                            numpyro.sample(f"resid_{pair_tag}", mvn, obs=joint_resid)
+        
         
         return numpyro_model
 
@@ -628,6 +602,37 @@ class NumPyroBuilder:
             return "    " * n
 
         pinned = set()
+        
+        # Generated string for MAG Induced correlations
+        induced_cor_set = set()
+        induced_err_vars = {}
+        if self.latent_method == "correlation" and getattr(self, "induced_correlations_closure", None):
+            lines.append(f"{ind()}# --- MAG Induced Correlations ---")
+            for pair in self.induced_correlations_closure:
+                var1, var2 = pair[0], pair[1]
+                pair_tag = f"{var1}_{var2}"
+                induced_cor_set.add(var1)
+                induced_cor_set.add(var2)
+                
+                if var1 not in induced_err_vars: induced_err_vars[var1] = []
+                if var2 not in induced_err_vars: induced_err_vars[var2] = []
+                induced_err_vars[var1].append(f"err_res_{pair_tag}[..., 0]")
+                induced_err_vars[var2].append(f"err_res_{pair_tag}[..., 1]")
+                
+                lines.append(f"{ind()}L_corr_{pair_tag} = numpyro.sample('L_corr_{pair_tag}', dist.LKJCholesky(2, concentration=1.0))")
+                lines.append(f"{ind()}corr_mat_{pair_tag} = L_corr_{pair_tag} @ L_corr_{pair_tag}.T")
+                lines.append(f"{ind()}sigma_res_{var1}_{var2} = numpyro.sample('sigma_res_{var1}_{var2}', dist.HalfNormal(1.0))")
+                lines.append(f"{ind()}sigma_res_{var2}_{var1} = numpyro.sample('sigma_res_{var2}_{var1}', dist.HalfNormal(1.0))")
+                lines.append(f"{ind()}scale_diag_{pair_tag} = jnp.array([sigma_res_{var1}_{var2}, sigma_res_{var2}_{var1}])")
+                lines.append(f"{ind()}cov_mat_{pair_tag} = jnp.outer(scale_diag_{pair_tag}, scale_diag_{pair_tag}) * corr_mat_{pair_tag}")
+                lines.append(f"{ind()}numpyro.deterministic('rho_{pair_tag}', corr_mat_{pair_tag}[1, 0])")
+                lines.append(f"{ind()}mvn_{pair_tag} = dist.MultivariateNormal(loc=jnp.zeros(2), covariance_matrix=cov_mat_{pair_tag})")
+                if hasattr(self, "has_multiPhylo") and self.has_multiPhylo and not getattr(self, "force_plate_obs", False):
+                    lines.append(f"{ind()}err_res_{pair_tag} = numpyro.sample('err_res_{pair_tag}', mvn_{pair_tag}.expand([N]).to_event(1))")
+                else:
+                    lines.append(f"{ind()}with numpyro.plate('err_res_{pair_tag}_plate', N):")
+                    lines.append(f"{ind(2)}err_res_{pair_tag} = numpyro.sample('err_res_{pair_tag}', mvn_{pair_tag})")
+            lines.append("")
 
         for var in topo_order:
             # Deterministic node
@@ -691,6 +696,11 @@ class NumPyroBuilder:
                 lines.append(f"{ind()}u_{var}_{grp} = numpyro.deterministic('u_{var}_{grp}', z_{var}_{grp} * sigma_{var}_{grp})")
                 lines.append(f"{ind()}mu_{var} = mu_{var} + u_{var}_{grp}[{grp}]")
                 sigma_struct_names.append(grp)
+                
+            if var in induced_err_vars:
+                lines.append(f"{ind()}# Add latent induced correlation errors")
+                for err_term in induced_err_vars[var]:
+                    lines.append(f"{ind()}mu_{var} = mu_{var} + {err_term}")
 
             # Distribution
             lines.append(f"{ind()}# Likelihood")
