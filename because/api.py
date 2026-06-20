@@ -98,6 +98,10 @@ def _init_jax(n_cores: int = 1) -> None:
             new_flags.append(f"--xla_force_host_platform_device_count={n_cores}")
         if "--xla_cpu_multi_thread_eigen" not in existing_xla:
             new_flags.append("--xla_cpu_multi_thread_eigen=false")
+        if "intra_op_parallelism_threads" not in existing_xla:
+            new_flags.append(f"intra_op_parallelism_threads={n_cores}")
+        if "inter_op_parallelism_threads" not in existing_xla:
+            new_flags.append(f"inter_op_parallelism_threads={n_cores}")
         if new_flags:
             os.environ["XLA_FLAGS"] = (existing_xla + " " + " ".join(new_flags)).strip()
 
