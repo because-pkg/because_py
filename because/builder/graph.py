@@ -60,55 +60,101 @@ class CausalGraph:
     def get_basis_set(self, latent=None):
         """
         Computes the minimal DAG basis set of implied conditional independencies.
-        If latent variables are provided, projects to a MAG by filtering untestable claims
-        (Shipley & Douma 2021).
+        If latent variables are provided, projects to a MAG (Shipley & Douma 2021)
+        and natively applies a collinearity penalty to select the optimal
+        conditioning sets of purely observed variables.
         """
         if self.dag is None:
             self.build()
             
         latent = latent or []
-        topo_order = self.get_topological_order()
-        basis_set = []
+        import itertools
         
-        for i, vi in enumerate(topo_order):
-            parents_vi = set(self.dag.predecessors(vi))
-            preceding_nodes = set(topo_order[:i])
-            non_descendants = preceding_nodes - parents_vi
-            
-            for vj in non_descendants:
-                parents_vj = set(self.dag.predecessors(vj))
-                basis_set.append({
-                    "response": vi,
-                    "test_node": vj,
-                    "conditioning_set": list(parents_vi | parents_vj)
-                })
-                
-        # Filtering
-        filtered_basis = []
+        # We only test pairs of observed, non-deterministic nodes
         det_names = set(self.deterministic_terms.keys())
+        observed_nodes = [n for n in self.dag.nodes if n not in latent and n not in det_names]
         
-        for claim in basis_set:
-            vi = claim["response"]
-            vj = claim["test_node"]
-            cond = claim["conditioning_set"]
-            
-            # Deterministic nodes cannot be the focal response or test node
-            # (they have 0 structural variance)
-            if vi in det_names or vj in det_names:
+        # Track which nodes share a latent parent
+        latent_sharers = {n: set() for n in observed_nodes}
+        for l in latent:
+            if l in self.dag.nodes:
+                children = list(self.dag.successors(l))
+                for c in children:
+                    if c in latent_sharers:
+                        latent_sharers[c].update(x for x in children if x != c)
+        
+        pairs = list(itertools.combinations(observed_nodes, 2))
+        topo_order = list(nx.topological_sort(self.dag))
+        
+        # Helper for networkx deprecation
+        def check_d_separated(G, u, v, z):
+            if hasattr(nx, "is_d_separator"):
+                return nx.is_d_separator(G, u, v, z)
+            else:
+                return nx.d_separated(G, u, v, z)
+        
+        basis_set = []
+        for vi, vj in pairs:
+            # Check if adjacent in DAG
+            if self.dag.has_edge(vi, vj) or self.dag.has_edge(vj, vi):
+                continue
+            # Check if adjacent in MAG (share a latent parent)
+            if vj in latent_sharers.get(vi, set()):
                 continue
                 
-            # MAG Projection: Remove untestable claims involving latents
-            if latent:
-                # Cannot condition on a latent
-                if any(c in latent for c in cond):
-                    continue
-                # Cannot test independence involving a latent directly
-                if vi in latent or vj in latent:
-                    continue
-                    
-            filtered_basis.append(claim)
+            best_Z = None
+            best_score = (float('inf'), float('inf'))
             
-        return filtered_basis
+            # The minimal separating set is guaranteed to be a subset of the ancestors
+            ancestors = set(nx.ancestors(self.dag, vi)) | set(nx.ancestors(self.dag, vj))
+            candidate_pool = [n for n in ancestors if n in observed_nodes and n != vi and n != vj and n not in det_names]
+            
+            found_perfect = False
+            for r in range(len(candidate_pool) + 1):
+                for z_tuple in itertools.combinations(candidate_pool, r):
+                    Z = set(z_tuple)
+                    if check_d_separated(self.dag, {vi}, {vj}, Z):
+                        # Collinearity penalty
+                        col_pen = sum(1 for z in Z if z in latent_sharers.get(vi, set()) or z in latent_sharers.get(vj, set()))
+                        size_pen = len(Z)
+                        
+                        if (col_pen, size_pen) < best_score:
+                            best_score = (col_pen, size_pen)
+                            best_Z = list(Z)
+                            
+                        # If size is minimal (because we iterate r ascending) and col_pen is 0, this is globally optimal
+                        if best_score[0] == 0:
+                            found_perfect = True
+                            break
+                if found_perfect:
+                    break
+                    
+            if best_Z is not None:
+                # Collinearity Orientation Rule: Minimize RHS collinearity
+                rhs1 = [vj] + best_Z # predictors if vi is response
+                rhs2 = [vi] + best_Z # predictors if vj is response
+                
+                col_pen1 = sum(1 for z1, z2 in itertools.combinations(rhs1, 2) if z1 in latent_sharers.get(z2, set()))
+                col_pen2 = sum(1 for z1, z2 in itertools.combinations(rhs2, 2) if z1 in latent_sharers.get(z2, set()))
+                
+                if col_pen2 < col_pen1:
+                    resp, test_node = vj, vi
+                elif col_pen1 < col_pen2:
+                    resp, test_node = vi, vj
+                else:
+                    # Tie-breaker: Topo order dictates response vs predictor
+                    if topo_order.index(vi) > topo_order.index(vj):
+                        resp, test_node = vi, vj
+                    else:
+                        resp, test_node = vj, vi
+                    
+                basis_set.append({
+                    "response": resp,
+                    "test_node": test_node,
+                    "conditioning_set": best_Z
+                })
+                
+        return basis_set
         
     def get_induced_correlations(self, latent):
         """
@@ -163,14 +209,7 @@ class CausalGraph:
             test_var = claim["test_node"]
             cond = claim["conditioning_set"]
             
-            # Rule 1: Latent child swap
-            # If resp is a latent child and test_var is not -> swap
-            if latent:
-                r_lc = resp in latent_children
-                t_lc = test_var in latent_children
-                if r_lc and not t_lc:
-                    resp, test_var = test_var, resp
-                    
+
             # Rule 2: Root node swap
             # Root nodes (no parents) should always be predictors, never responses.
             # If resp is a root node and test_var is not -> swap

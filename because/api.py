@@ -290,12 +290,18 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
         
     # D-Separation Testing (and M-Separation)
     # ----------------------------------------------------
-    dsep_equations = graph.generate_dsep_equations(latent=latent)
-    
-    # Filter if incremental caching is used from R
-    if dsep_equations_to_run is not None:
-        norm_to_run = [" ".join(e.split()) for e in dsep_equations_to_run]
-        dsep_equations = [c for c in dsep_equations if " ".join(c["equation_string"].split()) in norm_to_run]
+    # If dsep_equations_to_run is provided as a list of dicts, it comes pre-computed
+    # from the R package (which uses dagitty's optimal MAG logic).
+    if dsep_equations_to_run is not None and len(dsep_equations_to_run) > 0 and isinstance(dsep_equations_to_run[0], dict):
+        dsep_equations = dsep_equations_to_run
+    else:
+        # Otherwise, fall back to Python's internal graph logic
+        dsep_equations = graph.generate_dsep_equations(latent=latent)
+        
+        # Filter if incremental caching is used from R (old string-based format)
+        if dsep_equations_to_run is not None:
+            norm_to_run = [" ".join(e.split()) for e in dsep_equations_to_run]
+            dsep_equations = [c for c in dsep_equations if " ".join(c["equation_string"].split()) in norm_to_run]
 
     if not dsep_equations:
         if not quiet:
@@ -358,9 +364,11 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
         if cor_matrices and any(v.get("type") == "multiPhylo" for v in cor_matrices.values()):
             n_trees = int(jax_dsep_data.get("Ntree", 10))
             kernel_base = DiscreteHMCGibbs(kernel_base)
-        test_mcmc = MCMC(kernel_base, num_warmup=num_warmup, num_samples=num_samples, num_chains=dsep_chains, thinning=thinning, progress_bar=False)
-        
-        test_mcmc.run(subkey, **jax_dsep_data)
+        import warnings
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*There are not enough devices.*")
+            test_mcmc = MCMC(kernel_base, num_warmup=num_warmup, num_samples=num_samples, num_chains=dsep_chains, thinning=thinning, progress_bar=False)
+            test_mcmc.run(subkey, **jax_dsep_data)
         
         # We need grouped samples for Rhat and neff calculations
         samples_grouped = test_mcmc.get_samples(group_by_chain=True)
