@@ -235,7 +235,7 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
         rng_key, subkey = jax.random.split(rng_key)
         
         kernel_base = NUTS(model_func, target_accept_prob=adapt_delta, init_strategy=numpyro.infer.init_to_sample())
-        if cor_matrices and any(v.get("type") == "multiPhylo" for v in cor_matrices.values()):
+        if cor_matrices and any(isinstance(v, dict) and v.get("type") == "multiPhylo" for v in cor_matrices.values()):
             n_trees = int(jax_data.get("Ntree", 10))
             def rw_fn(rng_key, discrete_sites):
                 new_sites = {}
@@ -273,7 +273,7 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
             # For multiPhylo, the exact Gibbs kernel requires `.to_event(1)` on the observation sites,
             # which collapses the log-likelihood to a scalar per chain/sample, preventing pointwise WAIC calculation.
             # We must rebuild the model using standard `numpyro.plate` specifically for WAIC evaluation.
-            has_multiPhylo = cor_matrices and any(v.get("type") == "multiPhylo" for v in cor_matrices.values())
+            has_multiPhylo = cor_matrices and any(isinstance(v, dict) and v.get("type") == "multiPhylo" for v in cor_matrices.values())
             if has_multiPhylo:
                 waic_model_func = compiler.generate_model_function(data_for_compilation=data, force_plate_obs=True)
             else:
@@ -361,7 +361,7 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
         # To get valid Rhat, we enforce at least 2 chains if the user requested less than 2
         dsep_chains = max(2, num_chains)
         kernel_base = NUTS(test_model_func, target_accept_prob=adapt_delta, init_strategy=numpyro.infer.init_to_sample())
-        if cor_matrices and any(v.get("type") == "multiPhylo" for v in cor_matrices.values()):
+        if cor_matrices and any(isinstance(v, dict) and v.get("type") == "multiPhylo" for v in cor_matrices.values()):
             n_trees = int(jax_dsep_data.get("Ntree", 10))
             kernel_base = DiscreteHMCGibbs(kernel_base)
         with warnings.catch_warnings():
