@@ -379,6 +379,8 @@ class NumPyroBuilder:
                             expected_size = int(data[f"N_{group_name}"])
                         elif group_name in custom_transforms:
                             expected_size = len(custom_transforms[group_name]["matrix"])
+                        elif group_name in L_matrices:
+                            expected_size = L_matrices[group_name].shape[0]
                             
                         if expected_size is not None:
                             # Find which level has this size
