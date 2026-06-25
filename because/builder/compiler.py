@@ -233,7 +233,13 @@ class NumPyroBuilder:
                         
                         computed_vars[var] = eval(expr, {"jnp": jnp, "np": np}, local_vars)
                     else:
-                        computed_vars[var] = eval(expr, {"jnp": jnp, "np": np}, computed_vars)
+                        try:
+                            computed_vars[var] = eval(expr, {"jnp": jnp, "np": np}, computed_vars)
+                        except Exception:
+                            # If it fails to evaluate globally (e.g. broadcasting shape mismatch)
+                            # and target_size was None (meaning it's unused in the current equations),
+                            # just skip it. It will raise a KeyError later if it WAS actually needed.
+                            pass
                     continue
                 
                 eq = equations_dict.get(var)
