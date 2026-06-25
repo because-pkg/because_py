@@ -147,6 +147,8 @@ def _init_jax(n_cores: int = 1) -> None:
 
 def get_dsep_equations(equations, latent=None):
     """Helper to return implied d-sep claims without fitting the model."""
+    if isinstance(latent, str):
+        latent = [latent]
     test_parser = FormulaParser(equations)
     test_parsed = test_parser.parse()
     graph = CausalGraph(test_parsed)
@@ -193,6 +195,9 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
     _init_jax(n_cores)
 
     # Auto-detect latents: variables in equations but not in data
+    if isinstance(latent, str):
+        latent = [latent]
+        
     if latent is None:
         vars_in_eqs = set()
         for eq in parsed:
