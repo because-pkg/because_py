@@ -364,7 +364,6 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
         if cor_matrices and any(v.get("type") == "multiPhylo" for v in cor_matrices.values()):
             n_trees = int(jax_dsep_data.get("Ntree", 10))
             kernel_base = DiscreteHMCGibbs(kernel_base)
-        import warnings
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message=".*There are not enough devices.*")
             test_mcmc = MCMC(kernel_base, num_warmup=num_warmup, num_samples=num_samples, num_chains=dsep_chains, thinning=thinning, progress_bar=False)
