@@ -354,10 +354,6 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
         test_graph.build()
         
         test_compiler = NumPyroBuilder(test_graph, family_dict=family, deterministic_terms=deterministic_terms, cor_matrices=cor_matrices, fix_latent=fix_latent)
-        if True:
-            print("\n=== DSEP MODEL CODE ===")
-            print(test_compiler.generate_model_code_string())
-            print("=======================\n")
 
         test_model_func = test_compiler.generate_model_function(data_for_compilation=dsep_data)
         

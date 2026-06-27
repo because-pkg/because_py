@@ -281,8 +281,14 @@ class NumPyroBuilder:
                 
                 # --- Fixed Effects ---
                 mu = jnp.zeros(target_size)
+                
+                # Use tighter priors for non-linear link functions (GLMs) to prevent MCMC trapping
+                # JAGS uses dnorm(0, 1) for binomial/ordinal, but left poisson at dnorm(0, 0.01) [sd=10]
+                # We apply sd=1.0 to all non-identity link families to ensure robust sampling.
+                prior_scale = 1.0 if family in ["poisson", "binomial", "bernoulli", "occupancy", "zip", "zinb", "multinomial", "ordinal"] else 10.0
+                
                 if eq["intercept"]:
-                    alpha = numpyro.sample(f"alpha_{var}", dist.Normal(0, 10))
+                    alpha = numpyro.sample(f"alpha_{var}", dist.Normal(0, prior_scale))
                     mu = mu + alpha
                     
                 for pred in eq["fixed"]:
@@ -292,12 +298,12 @@ class NumPyroBuilder:
                         if self.fix_latent == "loading":
                             beta = 1.0
                         elif self.fix_latent == "sign":
-                            beta = numpyro.sample(f"beta_{var}_{pred}", dist.TruncatedNormal(loc=0.0, scale=10.0, low=0.0))
+                            beta = numpyro.sample(f"beta_{var}_{pred}", dist.TruncatedNormal(loc=0.0, scale=prior_scale, low=0.0))
                         else:
-                            beta = numpyro.sample(f"beta_{var}_{pred}", dist.Normal(0, 10))
+                            beta = numpyro.sample(f"beta_{var}_{pred}", dist.Normal(0, prior_scale))
                         local_pinned_latents.add(pred)
                     else:
-                        beta = numpyro.sample(f"beta_{var}_{pred}", dist.Normal(0, 10))
+                        beta = numpyro.sample(f"beta_{var}_{pred}", dist.Normal(0, prior_scale))
                     
                     pred_data = computed_vars[pred]
                     
