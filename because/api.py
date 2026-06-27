@@ -347,10 +347,6 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
             print(f"\n[Test {i+1} / {len(dsep_equations)}]  {eq_str}  {test_desc}")
             
         compile_eq_str = eq_str
-        if cor_matrices:
-            for s_name in cor_matrices.keys():
-                if f"(1|{s_name})" not in compile_eq_str.replace(" ", ""):
-                    compile_eq_str += f" + (1|{s_name})"
             
         test_parser = FormulaParser([compile_eq_str])
         test_parsed = test_parser.parse()
@@ -358,6 +354,11 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
         test_graph.build()
         
         test_compiler = NumPyroBuilder(test_graph, family_dict=family, deterministic_terms=deterministic_terms, cor_matrices=cor_matrices, fix_latent=fix_latent)
+        if True:
+            print("\n=== DSEP MODEL CODE ===")
+            print(test_compiler.generate_model_code_string())
+            print("=======================\n")
+
         test_model_func = test_compiler.generate_model_function(data_for_compilation=dsep_data)
         
         rng_key, subkey = jax.random.split(rng_key)

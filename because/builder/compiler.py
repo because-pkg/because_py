@@ -23,6 +23,7 @@ class NumPyroBuilder:
         self.pinned_latents = set()
         # Normalise to list-of-lists (R may pass as list of character vectors)
         self.induced_correlations = [list(pair) for pair in induced_correlations] if induced_correlations else []
+        self.latent_method = "correlation" if self.induced_correlations else None
 
     def generate_model_function(self, data_for_compilation=None, force_plate_obs=False):
         """
@@ -438,7 +439,9 @@ class NumPyroBuilder:
                                     f"during JAX compilation. Please provide '{n_var}' as an integer in your data dictionary."
                                 )
                     
+
                     sigma_group = numpyro.sample(f"sigma_{var}_{group_name}", dist.HalfNormal(5))
+
                     with numpyro.plate(f"{var}_{group_name}_plate", num_groups):
                         z_group_raw = numpyro.sample(f"z_{var}_{group_name}_raw", dist.Normal(0, 1))
                     
