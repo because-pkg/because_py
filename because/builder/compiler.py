@@ -445,8 +445,10 @@ class NumPyroBuilder:
                                     f"during JAX compilation. Please provide '{n_var}' as an integer in your data dictionary."
                                 )
                     
-
-                    sigma_group = numpyro.sample(f"sigma_{var}_{group_name}", dist.HalfNormal(5))
+                    if family in ["poisson", "binomial", "negbinomial"]:
+                        sigma_group = numpyro.sample(f"sigma_{var}_{group_name}", dist.HalfNormal(1.0))
+                    else:
+                        sigma_group = numpyro.sample(f"sigma_{var}_{group_name}", dist.HalfNormal(5.0))
 
                     with numpyro.plate(f"{var}_{group_name}_plate", num_groups):
                         z_group_raw = numpyro.sample(f"z_{var}_{group_name}_raw", dist.Normal(0, 1))
