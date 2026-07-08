@@ -4,7 +4,7 @@ class NumPyroBuilder:
     """
     Takes a parsed causal graph and generates the dynamic NumPyro model via a closure.
     """
-    def __init__(self, causal_graph, family_dict=None, deterministic_terms=None, cor_matrices=None, fix_latent="loading", induced_correlations=None):
+    def __init__(self, causal_graph, family_dict=None, deterministic_terms=None, cor_matrices=None, fix_latent="loading", induced_correlations=None, prior_scale_fixed=None):
         """
         :param causal_graph: The compiled CausalGraph object.
         :param family_dict: Dictionary specifying families (e.g. {"y": "poisson"}). Default is "gaussian".
@@ -13,6 +13,7 @@ class NumPyroBuilder:
         :param fix_latent: Method for anchoring latents: 'loading' or 'sign'.
         :param induced_correlations: List of variable-pair lists/tuples for MAG induced correlations.
             e.g. [["Brain", "Mass"]] means Brain and Mass share a correlated residual.
+        :param prior_scale_fixed: Optional dictionary for fixing prior scales.
         """
         self.graph = causal_graph
         self.parsed_equations = {eq["response"]: eq for eq in causal_graph.parsed_equations.values() if eq["response"]}
@@ -21,6 +22,7 @@ class NumPyroBuilder:
         self.cor_matrices = cor_matrices or {}
         self.fix_latent = fix_latent
         self.pinned_latents = set()
+        self.prior_scale_fixed = prior_scale_fixed
         # Normalise to list-of-lists (R may pass as list of character vectors)
         self.induced_correlations = [list(pair) for pair in induced_correlations] if induced_correlations else []
         self.latent_method = "correlation" if self.induced_correlations else None
@@ -77,84 +79,113 @@ class NumPyroBuilder:
             local_pinned_latents = set()
             
             # --- MAG Induced Correlations (latent_method = "correlation") ---
-            # To correctly model variables involved in induced correlations, we sample
-            # latent residual vectors from a MVN and ADD them to the structural mean (mu)
-            # of the respective variables. The variables then retain their independent
-            # Gaussian likelihoods (sigma), which allows robust inference even when a
-            # variable is part of multiple correlations.
+            # Each correlated pair (var1, var2) gets its own independent sigma_res
+            # parameters. These scale the MVN latent errors that are ADDED to each
+            # variable's structural mean (mu). The variables then use their own
+            # independent Gaussian sigma for the remaining unexplained variance.
+            # This exactly mirrors the JAGS dwish parameterization:
+            #   err[i] ~ dmvnorm(0, Sigma_res)  where Sigma_res is 2x2
+            #   var1[i] ~ dnorm(mu1[i] + err[i,1], tau1)
+            #   var2[i] ~ dnorm(mu2[i] + err[i,2], tau2)
+            # Note: sigma_res captures the INDUCED residual correlation component only.
+            # The variable's independent sigma captures the remaining residual.
             induced_err_storage = {}   # var -> list of latent error arrays
             induced_cor_set    = set() # all variables involved in any induced correlation
             ind_cor_pairs = induced_correlations_closure
             for pair in ind_cor_pairs:
                 induced_cor_set.add(pair[0])
                 induced_cor_set.add(pair[1])
-            
-            # Pre-compute degrees for Dirichlet variance partitioning
-            induced_degrees = {var: 0 for var in induced_cor_set}
-            for pair in ind_cor_pairs:
-                induced_degrees[pair[0]] += 1
-                induced_degrees[pair[1]] += 1
-            
+
+            # --- Universal Variance Component Partitioning ---
+            # To fix non-identifiability in variables with multiple competing variance components
+            # (e.g. independent residual + spatial GP + induced correlation), we partition a single
+            # total variance using a Dirichlet (or Beta for K=2) distribution.
             var_variances = {}
-            for var in induced_cor_set:
-                fam = families.get(var, "gaussian").lower()
-                degree = induced_degrees[var]
-                # Gaussian variables have an independent sigma component too, others just partition the latent residuals
-                num_components = degree + 1 if fam == "gaussian" else degree
-                
-                sigma_total = numpyro.sample(f"sigma_total_{var}", dist.HalfNormal(5.0))
-                if num_components > 1:
-                    weights = numpyro.sample(f"var_weights_{var}", dist.Dirichlet(jnp.ones(num_components)))
-                else:
-                    weights = jnp.ones(1)
+            for var in topo_order:
+                family = families.get(var, "gaussian").lower()
+                if family != "gaussian":
+                    continue
                     
-                var_variances[var] = {
-                    "sigma_total": sigma_total,
-                    "weights": weights,
-                    "weight_idx": 0
-                }
+                eq = equations_dict.get(var)
+                if not eq and var not in induced_cor_set:
+                    continue
+                    
+                if not eq:
+                    eq = {"random": []}
+                    
+                components = ["indep"]
+                if var in induced_cor_set:
+                    components.append("shared")
+                for rand_term in eq.get("random", []):
+                    import re
+                    match = re.search(r"\(1\s*\|\s*([^)]+)\)", rand_term)
+                    if match:
+                        components.append(match.group(1).strip())
+                
+                K = len(components)
+                if K > 1:
+                    sigma_tot = numpyro.sample(f"sigma_tot_{var}", dist.HalfNormal(2.0))
+                    if K == 2:
+                        prop = numpyro.sample(f"prop_{var}", dist.Beta(2.0, 2.0))
+                        props = jnp.array([prop, 1.0 - prop])
+                    else:
+                        props = numpyro.sample(f"props_{var}", dist.Dirichlet(jnp.ones(K) * 2.0))
+                        
+                    var_variances[var] = {}
+                    for i, comp in enumerate(components):
+                        if comp == "indep":
+                            # We don't wrap it in deterministic yet so it doesn't conflict with later sigma_{var} definition
+                            var_variances[var][comp] = sigma_tot * jnp.sqrt(props[i])
+                        elif comp == "shared":
+                            var_variances[var][comp] = numpyro.deterministic(f"sigma_shared_{var}", sigma_tot * jnp.sqrt(props[i]))
+                        else:
+                            var_variances[var][comp] = numpyro.deterministic(f"sigma_{var}_{comp}", sigma_tot * jnp.sqrt(props[i]))
 
             for pair in ind_cor_pairs:
                 var1, var2 = pair[0], pair[1]
                 pair_tag = f"{var1}_{var2}"
-                induced_cor_set.add(var1)
-                induced_cor_set.add(var2)
                 
-                # --- LKJ prior on 2x2 correlation matrix (equivalent to JAGS dwish) ---
+                # --- Shared sigma_res for each variable in the pair ---
+                # These represent the SD of the shared latent component for each variable.
+                sigma_res1 = var_variances[var1]["shared"]
+                sigma_res2 = var_variances[var2]["shared"]
+                
+                # --- LKJ prior on 2x2 correlation matrix ---
                 L_corr = numpyro.sample(
                     f"L_corr_{pair_tag}",
-                    dist.LKJCholesky(2, concentration=1.0)
+                    dist.LKJCholesky(2, concentration=2.0)
                 )
-                corr_mat = L_corr @ L_corr.T
-                
-                # --- Scale parameters (marginal residual SDs) via Dirichlet partition ---
-                w_idx1 = var_variances[var1]["weight_idx"]
-                sigma_res1_val = var_variances[var1]["sigma_total"] * jnp.sqrt(var_variances[var1]["weights"][w_idx1])
-                sigma_res1 = numpyro.deterministic(f"sigma_res_{var1}_{var2}", sigma_res1_val)
-                var_variances[var1]["weight_idx"] += 1
-                
-                w_idx2 = var_variances[var2]["weight_idx"]
-                sigma_res2_val = var_variances[var2]["sigma_total"] * jnp.sqrt(var_variances[var2]["weights"][w_idx2])
-                sigma_res2 = numpyro.deterministic(f"sigma_res_{var2}_{var1}", sigma_res2_val)
-                var_variances[var2]["weight_idx"] += 1
-                
-                scale_diag = jnp.array([sigma_res1, sigma_res2])
-                
-                # --- Non-Centered Parameterization (NCP) for latent MVN errors ---
-                # L_cov is the lower Cholesky factor of the covariance matrix
-                L_cov = scale_diag[:, None] * L_corr
                 
                 # --- Deterministic rho (same meaning as JAGS rho_var1_var2) ---
                 numpyro.deterministic(f"rho_{pair_tag}", L_corr[1, 0])
+
+                scale_diag = jnp.array([sigma_res1, sigma_res2])
+                
+                # L_cov is the lower Cholesky factor of the covariance matrix
+                L_cov = scale_diag[:, None] * L_corr
+                
+                # --- Non-Centered Parameterization (NCP) for latent MVN errors ---
+                # CRITICAL: use the actual size of the variables at their level, NOT the global N.
+                # e.g. NDVI and Flower_Cover are site-level (30 rows), not obs-level (4500).
+                n_pair = N  # fallback to global N
+                for _v in [var1, var2]:
+                    if _v in data and hasattr(data[_v], "shape") and len(data[_v].shape) > 0:
+                        n_pair = int(data[_v].shape[0])
+                        break
+                    # Also check N_var key (set by flatten_for_python for hierarchy)
+                    n_key = f"N_{_v}"
+                    if n_key in data:
+                        n_pair = int(data[n_key])
+                        break
                 
                 if has_multiPhylo and not force_plate_obs:
                     # DiscreteHMCGibbs needs a scalar log_prob: use to_event
                     z_err = numpyro.sample(
                         f"z_err_{pair_tag}",
-                        dist.Normal(0, 1).expand([N, 2]).to_event(2)
+                        dist.Normal(0, 1).expand([n_pair, 2]).to_event(2)
                     )
                 else:
-                    with numpyro.plate(f"err_res_{pair_tag}_plate", N, dim=-1):
+                    with numpyro.plate(f"err_res_{pair_tag}_plate", n_pair, dim=-1):
                         z_err = numpyro.sample(f"z_err_{pair_tag}", dist.Normal(0, 1).expand([2]).to_event(1))
                         
                 err = numpyro.deterministic(f"err_res_{pair_tag}", jnp.dot(z_err, L_cov.T))
@@ -285,7 +316,10 @@ class NumPyroBuilder:
                 # Use tighter priors for non-linear link functions (GLMs) to prevent MCMC trapping
                 # JAGS uses dnorm(0, 1) for binomial/ordinal, but left poisson at dnorm(0, 0.01) [sd=10]
                 # We apply sd=1.0 to all non-identity link families to ensure robust sampling.
-                prior_scale = 1.0 if family in ["poisson", "binomial", "bernoulli", "occupancy", "zip", "zinb", "multinomial", "ordinal"] else 10.0
+                if self.prior_scale_fixed is not None:
+                    prior_scale = self.prior_scale_fixed
+                else:
+                    prior_scale = 1.0 if family in ["poisson", "binomial", "bernoulli", "occupancy", "zip", "zinb", "multinomial", "ordinal"] else 2.5
                 
                 if eq["intercept"]:
                     alpha = numpyro.sample(f"alpha_{var}", dist.Normal(0, prior_scale))
@@ -445,10 +479,13 @@ class NumPyroBuilder:
                                     f"during JAX compilation. Please provide '{n_var}' as an integer in your data dictionary."
                                 )
                     
-                    if family in ["poisson", "binomial", "negbinomial"]:
-                        sigma_group = numpyro.sample(f"sigma_{var}_{group_name}", dist.HalfNormal(1.0))
+                    if var in var_variances and group_name in var_variances[var]:
+                        sigma_group = var_variances[var][group_name]
                     else:
-                        sigma_group = numpyro.sample(f"sigma_{var}_{group_name}", dist.HalfNormal(5.0))
+                        if family in ["poisson", "binomial", "negbinomial"]:
+                            sigma_group = numpyro.sample(f"sigma_{var}_{group_name}", dist.HalfNormal(1.0))
+                        else:
+                            sigma_group = numpyro.sample(f"sigma_{var}_{group_name}", dist.HalfNormal(2.0))
 
                     with numpyro.plate(f"{var}_{group_name}_plate", num_groups):
                         z_group_raw = numpyro.sample(f"z_{var}_{group_name}_raw", dist.Normal(0, 1))
@@ -483,17 +520,20 @@ class NumPyroBuilder:
                 
                 # --- Distribution Dispatcher ---
                 if family == "gaussian":
-                    if var in induced_cor_set:
-                        w_idx = var_variances[var]["weight_idx"]
-                        sigma_val = var_variances[var]["sigma_total"] * jnp.sqrt(var_variances[var]["weights"][w_idx])
-                        sigma = numpyro.deterministic(f"sigma_{var}", sigma_val)
+                    if var in var_variances and "indep" in var_variances[var]:
+                        # Use the independent component of the partitioned variance
+                        sigma = var_variances[var]["indep"]
+                        sigma = numpyro.deterministic(f"sigma_{var}", sigma)
                     else:
-                        sigma = numpyro.sample(f"sigma_{var}", dist.HalfNormal(5))
+                        sigma = numpyro.sample(f"sigma_{var}", dist.HalfNormal(2.0))
                     distribution = dist.Normal(mu, sigma)
                     
                     # Post-hoc calculate Pagel's lambda for any structural/phylogenetic random effects
                     for g_name, sig_g in sigma_struct_dict.items():
-                        numpyro.deterministic(f"lambda_{var}_{g_name}", (sig_g**2) / (sig_g**2 + sigma**2))
+                        # lambda = phylo variance / total variance
+                        # total variance = phylo variance + independent residual variance
+                        tot_res_var = sigma**2
+                        numpyro.deterministic(f"lambda_{var}_{g_name}", (sig_g**2) / (sig_g**2 + tot_res_var))
                 elif family == "poisson":
                     distribution = dist.Poisson(rate=jnp.exp(mu))
                 elif family == "binomial":
@@ -513,7 +553,10 @@ class NumPyroBuilder:
                 elif family == "multinomial":
                     distribution = dist.Categorical(logits=mu)
                 elif family == "ordinal":
-                    num_categories = len(jnp.unique(obs_data)) if obs_data is not None else 3
+                    if f"K_{var}" in data:
+                        num_categories = int(data[f"K_{var}"])
+                    else:
+                        num_categories = 3
                     c1 = numpyro.sample(f"c1_{var}", dist.Normal(0, 5))
                     increments = numpyro.sample(f"c_inc_{var}", dist.Exponential(1).expand([num_categories - 2]))
                     cutpoints = jnp.concatenate([jnp.array([c1]), c1 + jnp.cumsum(increments)])
@@ -674,32 +717,18 @@ class NumPyroBuilder:
         # Generated string for MAG Induced correlations
         induced_cor_set = set()
         induced_err_vars = {}
-        if self.latent_method == "correlation" and getattr(self, "induced_correlations_closure", None):
-            lines.append(f"{ind()}# --- MAG Induced Correlations (Dirichlet Variance Partition) ---")
-            
-            # Identify induced set and degrees
-            induced_degrees = {}
-            for pair in self.induced_correlations_closure:
-                induced_cor_set.add(pair[0])
-                induced_cor_set.add(pair[1])
-                induced_degrees[pair[0]] = induced_degrees.get(pair[0], 0) + 1
-                induced_degrees[pair[1]] = induced_degrees.get(pair[1], 0) + 1
-            
-            # Generate variance partitions
-            for var in induced_cor_set:
-                fam = families.get(var, "gaussian").lower()
-                degree = induced_degrees[var]
-                num_components = degree + 1 if fam == "gaussian" else degree
-                lines.append(f"{ind()}sigma_total_{var} = numpyro.sample('sigma_total_{var}', dist.HalfNormal(5.0))")
-                if num_components > 1:
-                    lines.append(f"{ind()}var_weights_{var} = numpyro.sample('var_weights_{var}', dist.Dirichlet(jnp.ones({num_components})))")
-                else:
-                    lines.append(f"{ind()}var_weights_{var} = jnp.ones(1)")
+        if self.latent_method == "correlation" and getattr(self, "induced_correlations", None):
+            lines.append(f"{ind()}# --- MAG Induced Correlations (direct sigma_res parameterization) ---")
+            lines.append(f"{ind()}# Each pair gets independent sigma_res for the shared latent component.")
+            lines.append(f"{ind()}# Variables retain their own independent sigma for remaining residuals.")
             lines.append("")
             
-            var_w_idx = {var: 0 for var in induced_cor_set}
+            induced_cor_set = set()
+            for pair in self.induced_correlations:
+                induced_cor_set.add(pair[0])
+                induced_cor_set.add(pair[1])
             
-            for pair in self.induced_correlations_closure:
+            for pair in self.induced_correlations:
                 var1, var2 = pair[0], pair[1]
                 pair_tag = f"{var1}_{var2}"
                 
@@ -708,26 +737,14 @@ class NumPyroBuilder:
                 induced_err_vars[var1].append(f"err_res_{pair_tag}[..., 0]")
                 induced_err_vars[var2].append(f"err_res_{pair_tag}[..., 1]")
                 
-                lines.append(f"{ind()}L_corr_{pair_tag} = numpyro.sample('L_corr_{pair_tag}', dist.LKJCholesky(2, concentration=1.0))")
-                lines.append(f"{ind()}corr_mat_{pair_tag} = L_corr_{pair_tag} @ L_corr_{pair_tag}.T")
-                
-                idx1 = var_w_idx[var1]
-                lines.append(f"{ind()}sigma_res_{var1}_{var2} = numpyro.deterministic('sigma_res_{var1}_{var2}', sigma_total_{var1} * jnp.sqrt(var_weights_{var1}[{idx1}]))")
-                var_w_idx[var1] += 1
-                
-                idx2 = var_w_idx[var2]
-                lines.append(f"{ind()}sigma_res_{var2}_{var1} = numpyro.deterministic('sigma_res_{var2}_{var1}', sigma_total_{var2} * jnp.sqrt(var_weights_{var2}[{idx2}]))")
-                var_w_idx[var2] += 1
-                
+                lines.append(f"{ind()}sigma_res_{var1}_{var2} = numpyro.sample('sigma_res_{var1}_{var2}', dist.HalfNormal(2.0))")
+                lines.append(f"{ind()}sigma_res_{var2}_{var1} = numpyro.sample('sigma_res_{var2}_{var1}', dist.HalfNormal(2.0))")
+                lines.append(f"{ind()}L_corr_{pair_tag} = numpyro.sample('L_corr_{pair_tag}', dist.LKJCholesky(2, concentration=2.0))")
+                lines.append(f"{ind()}numpyro.deterministic('rho_{pair_tag}', L_corr_{pair_tag}[1, 0])")
                 lines.append(f"{ind()}scale_diag_{pair_tag} = jnp.array([sigma_res_{var1}_{var2}, sigma_res_{var2}_{var1}])")
                 lines.append(f"{ind()}L_cov_{pair_tag} = scale_diag_{pair_tag}[:, None] * L_corr_{pair_tag}")
-                lines.append(f"{ind()}numpyro.deterministic('rho_{pair_tag}', L_corr_{pair_tag}[1, 0])")
-                
-                if hasattr(self, "has_multiPhylo") and self.has_multiPhylo and not getattr(self, "force_plate_obs", False):
-                    lines.append(f"{ind()}z_err_{pair_tag} = numpyro.sample('z_err_{pair_tag}', dist.Normal(0, 1).expand([N, 2]).to_event(2))")
-                else:
-                    lines.append(f"{ind()}with numpyro.plate('err_res_{pair_tag}_plate', N, dim=-1):")
-                    lines.append(f"{ind(2)}z_err_{pair_tag} = numpyro.sample('z_err_{pair_tag}', dist.Normal(0, 1).expand([2]).to_event(1))")
+                lines.append(f"{ind()}with numpyro.plate('err_res_{pair_tag}_plate', N, dim=-1):")
+                lines.append(f"{ind(2)}z_err_{pair_tag} = numpyro.sample('z_err_{pair_tag}', dist.Normal(0, 1).expand([2]).to_event(1))")
                 lines.append(f"{ind()}err_res_{pair_tag} = numpyro.deterministic('err_res_{pair_tag}', jnp.dot(z_err_{pair_tag}, L_cov_{pair_tag}.T))")
             lines.append("")
 
@@ -757,9 +774,12 @@ class NumPyroBuilder:
             lines.append(f"{ind()}mu_{var} = jnp.zeros(N)")
 
             # Intercept
+            prior_scale = 1.0 if family in ["poisson", "binomial", "bernoulli", "occupancy", "zip", "zinb", "multinomial", "ordinal"] else 2.5
             if eq.get("intercept", True):
-                lines.append(f"{ind()}alpha_{var} = numpyro.sample('alpha_{var}', dist.Normal(0, 10))")
+                lines.append(f"{ind()}alpha_{var} = numpyro.sample('alpha_{var}', dist.Normal(0, {prior_scale}))")
                 lines.append(f"{ind()}mu_{var} = mu_{var} + alpha_{var}")
+            else:
+                lines.append(f"{ind()}alpha_{var} = 0.0")
 
             # Fixed effects
             for pred in eq.get("fixed", []):
@@ -769,7 +789,7 @@ class NumPyroBuilder:
                     lines.append(f"{ind()}mu_{var} = mu_{var} + 1.0 * computed_vars.get('{pred}', {pred})")
                     pinned.add(pred)
                 else:
-                    lines.append(f"{ind()}beta_{var}_{pred} = numpyro.sample('beta_{var}_{pred}', dist.Normal(0, 10))")
+                    lines.append(f"{ind()}beta_{var}_{pred} = numpyro.sample('beta_{var}_{pred}', dist.Normal(0, {prior_scale}))")
                     lines.append(f"{ind()}mu_{var} = mu_{var} + beta_{var}_{pred} * computed_vars.get('{pred}', {pred})")
 
             # Random effects
@@ -781,7 +801,7 @@ class NumPyroBuilder:
                     continue
                 grp = match.group(1).strip()
                 lines.append(f"{ind()}# Random effect: (1 | {grp})")
-                lines.append(f"{ind()}sigma_{var}_{grp} = numpyro.sample('sigma_{var}_{grp}', dist.HalfNormal(5))")
+                lines.append(f"{ind()}sigma_{var}_{grp} = numpyro.sample('sigma_{var}_{grp}', dist.HalfNormal(2.0))")
                 lines.append(f"{ind()}with numpyro.plate('{var}_{grp}_plate', N_{grp}):")
                 lines.append(f"{ind(2)}z_{var}_{grp}_raw = numpyro.sample('z_{var}_{grp}_raw', dist.Normal(0, 1))")
 
@@ -806,15 +826,18 @@ class NumPyroBuilder:
             lines.append(f"{ind()}# Likelihood")
             if family == "gaussian":
                 if var in induced_cor_set:
-                    idx = var_w_idx[var]
-                    lines.append(f"{ind()}sigma_{var} = numpyro.deterministic('sigma_{var}', sigma_total_{var} * jnp.sqrt(var_weights_{var}[{idx}]))")
+                    # For generated code to match what we will do in compiler:
+                    lines.append(f"{ind()}# sigma_{var} is already computed via variance partitioning above")
                 else:
-                    lines.append(f"{ind()}sigma_{var} = numpyro.sample('sigma_{var}', dist.HalfNormal(5))")
+                    lines.append(f"{ind()}sigma_{var} = numpyro.sample('sigma_{var}', dist.HalfNormal(2.0))")
                 lines.append(f"{ind()}with numpyro.plate('{var}_plate', N):")
                 lines.append(f"{ind(2)}numpyro.sample('{var}', dist.Normal(mu_{var}, sigma_{var}), obs={var})")
                 for grp in sigma_struct_names:
                     lines.append(f"{ind()}numpyro.deterministic('lambda_{var}_{grp}',")
-                    lines.append(f"{ind()}    sigma_{var}_{grp}**2 / (sigma_{var}_{grp}**2 + sigma_{var}**2))")
+                    if var in var_variances:
+                        lines.append(f"{ind()}    sigma_{var}_{grp}**2 / (sigma_{var}_{grp}**2 + sigma_total_{var}**2))")
+                    else:
+                        lines.append(f"{ind()}    sigma_{var}_{grp}**2 / (sigma_{var}_{grp}**2 + sigma_{var}**2))")
             elif family == "poisson":
                 lines.append(f"{ind()}with numpyro.plate('{var}_plate', N):")
                 lines.append(f"{ind(2)}numpyro.sample('{var}', dist.Poisson(rate=jnp.exp(mu_{var})), obs={var})")

@@ -147,13 +147,15 @@ def _init_jax(n_cores: int = 1) -> None:
 
 def get_dsep_equations(equations, latent=None):
     """Helper to return implied d-sep claims without fitting the model."""
+    if isinstance(latent, str):
+        latent = [latent]
     test_parser = FormulaParser(equations)
     test_parsed = test_parser.parse()
     graph = CausalGraph(test_parsed)
     graph.build()
     return graph.generate_dsep_equations(latent=latent)
 
-def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_correlations=None, dsep=False, dsep_only=False, calculate_waic=False, num_samples=1000, num_warmup=500, num_chains=1, thinning=1, n_cores=1, seed=0, dsep_max_obs=2000, quiet=False, dsep_equations_to_run=None, adapt_delta=0.95, fix_latent="loading"):
+def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_correlations=None, dsep=False, dsep_only=False, calculate_waic=False, num_samples=1000, num_warmup=500, num_chains=1, thinning=1, n_cores=1, seed=0, dsep_max_obs=2000, quiet=False, dsep_equations_to_run=None, adapt_delta=0.95, fix_latent="loading", prior_scale_fixed=None):
     """
     High-level API for because-py. Fits a causal hierarchical model using NumPyro.
     
@@ -193,6 +195,9 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
     _init_jax(n_cores)
 
     # Auto-detect latents: variables in equations but not in data
+    if isinstance(latent, str):
+        latent = [latent]
+        
     if latent is None:
         vars_in_eqs = set()
         for eq in parsed:
@@ -212,7 +217,7 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
         print(f"   Unobserved stochastic nodes: {unobserved}")
         print("\nInitializing model")
         
-    compiler = NumPyroBuilder(graph, family_dict=family, deterministic_terms=deterministic_terms, cor_matrices=cor_matrices, fix_latent=fix_latent, induced_correlations=induced_correlations)
+    compiler = NumPyroBuilder(graph, family_dict=family, deterministic_terms=deterministic_terms, cor_matrices=cor_matrices, fix_latent=fix_latent, induced_correlations=induced_correlations, prior_scale_fixed=prior_scale_fixed)
     model_func = compiler.generate_model_function(data_for_compilation=data)
     # Generate human-readable Python source for inspection / because_continue()
     try:
@@ -235,7 +240,7 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
         rng_key, subkey = jax.random.split(rng_key)
         
         kernel_base = NUTS(model_func, target_accept_prob=adapt_delta, init_strategy=numpyro.infer.init_to_sample())
-        if cor_matrices and any(v.get("type") == "multiPhylo" for v in cor_matrices.values()):
+        if cor_matrices and any(isinstance(v, dict) and v.get("type") == "multiPhylo" for v in cor_matrices.values()):
             n_trees = int(jax_data.get("Ntree", 10))
             def rw_fn(rng_key, discrete_sites):
                 new_sites = {}
@@ -273,7 +278,7 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
             # For multiPhylo, the exact Gibbs kernel requires `.to_event(1)` on the observation sites,
             # which collapses the log-likelihood to a scalar per chain/sample, preventing pointwise WAIC calculation.
             # We must rebuild the model using standard `numpyro.plate` specifically for WAIC evaluation.
-            has_multiPhylo = cor_matrices and any(v.get("type") == "multiPhylo" for v in cor_matrices.values())
+            has_multiPhylo = cor_matrices and any(isinstance(v, dict) and v.get("type") == "multiPhylo" for v in cor_matrices.values())
             if has_multiPhylo:
                 waic_model_func = compiler.generate_model_function(data_for_compilation=data, force_plate_obs=True)
             else:
@@ -290,12 +295,18 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
         
     # D-Separation Testing (and M-Separation)
     # ----------------------------------------------------
-    dsep_equations = graph.generate_dsep_equations(latent=latent)
-    
-    # Filter if incremental caching is used from R
-    if dsep_equations_to_run is not None:
-        norm_to_run = [" ".join(e.split()) for e in dsep_equations_to_run]
-        dsep_equations = [c for c in dsep_equations if " ".join(c["equation_string"].split()) in norm_to_run]
+    # If dsep_equations_to_run is provided as a list of dicts, it comes pre-computed
+    # from the R package (which uses dagitty's optimal MAG logic).
+    if dsep_equations_to_run is not None and len(dsep_equations_to_run) > 0 and isinstance(dsep_equations_to_run[0], dict):
+        dsep_equations = dsep_equations_to_run
+    else:
+        # Otherwise, fall back to Python's internal graph logic
+        dsep_equations = graph.generate_dsep_equations(latent=latent)
+        
+        # Filter if incremental caching is used from R (old string-based format)
+        if dsep_equations_to_run is not None:
+            norm_to_run = [" ".join(e.split()) for e in dsep_equations_to_run]
+            dsep_equations = [c for c in dsep_equations if " ".join(c["equation_string"].split()) in norm_to_run]
 
     if not dsep_equations:
         if not quiet:
@@ -336,17 +347,14 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
             print(f"\n[Test {i+1} / {len(dsep_equations)}]  {eq_str}  {test_desc}")
             
         compile_eq_str = eq_str
-        if cor_matrices:
-            for s_name in cor_matrices.keys():
-                if f"(1|{s_name})" not in compile_eq_str.replace(" ", ""):
-                    compile_eq_str += f" + (1|{s_name})"
             
         test_parser = FormulaParser([compile_eq_str])
         test_parsed = test_parser.parse()
         test_graph = CausalGraph(test_parsed, deterministic_terms=deterministic_terms)
         test_graph.build()
         
-        test_compiler = NumPyroBuilder(test_graph, family_dict=family, deterministic_terms=deterministic_terms, cor_matrices=cor_matrices, fix_latent=fix_latent)
+        test_compiler = NumPyroBuilder(test_graph, family_dict=family, deterministic_terms=deterministic_terms, cor_matrices=cor_matrices, fix_latent=fix_latent, prior_scale_fixed=prior_scale_fixed)
+
         test_model_func = test_compiler.generate_model_function(data_for_compilation=dsep_data)
         
         rng_key, subkey = jax.random.split(rng_key)
@@ -355,12 +363,13 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
         # To get valid Rhat, we enforce at least 2 chains if the user requested less than 2
         dsep_chains = max(2, num_chains)
         kernel_base = NUTS(test_model_func, target_accept_prob=adapt_delta, init_strategy=numpyro.infer.init_to_sample())
-        if cor_matrices and any(v.get("type") == "multiPhylo" for v in cor_matrices.values()):
+        if cor_matrices and any(isinstance(v, dict) and v.get("type") == "multiPhylo" for v in cor_matrices.values()):
             n_trees = int(jax_dsep_data.get("Ntree", 10))
             kernel_base = DiscreteHMCGibbs(kernel_base)
-        test_mcmc = MCMC(kernel_base, num_warmup=num_warmup, num_samples=num_samples, num_chains=dsep_chains, thinning=thinning, progress_bar=False)
-        
-        test_mcmc.run(subkey, **jax_dsep_data)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*There are not enough devices.*")
+            test_mcmc = MCMC(kernel_base, num_warmup=num_warmup, num_samples=num_samples, num_chains=dsep_chains, thinning=thinning, progress_bar=False)
+            test_mcmc.run(subkey, **jax_dsep_data)
         
         # We need grouped samples for Rhat and neff calculations
         samples_grouped = test_mcmc.get_samples(group_by_chain=True)

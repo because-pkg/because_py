@@ -4,7 +4,7 @@ class NumPyroBuilder:
     """
     Takes a parsed causal graph and generates the dynamic NumPyro model via a closure.
     """
-    def __init__(self, causal_graph, family_dict=None, deterministic_terms=None, cor_matrices=None, fix_latent="loading", induced_correlations=None):
+    def __init__(self, causal_graph, family_dict=None, deterministic_terms=None, cor_matrices=None, fix_latent="loading", induced_correlations=None, prior_scale_fixed=None):
         """
         :param causal_graph: The compiled CausalGraph object.
         :param family_dict: Dictionary specifying families (e.g. {"y": "poisson"}). Default is "gaussian".
@@ -13,6 +13,7 @@ class NumPyroBuilder:
         :param fix_latent: Method for anchoring latents: 'loading' or 'sign'.
         :param induced_correlations: List of variable-pair lists/tuples for MAG induced correlations.
             e.g. [["Brain", "Mass"]] means Brain and Mass share a correlated residual.
+        :param prior_scale_fixed: Optional dictionary for fixing prior scales.
         """
         self.graph = causal_graph
         self.parsed_equations = {eq["response"]: eq for eq in causal_graph.parsed_equations.values() if eq["response"]}
@@ -21,8 +22,10 @@ class NumPyroBuilder:
         self.cor_matrices = cor_matrices or {}
         self.fix_latent = fix_latent
         self.pinned_latents = set()
+        self.prior_scale_fixed = prior_scale_fixed
         # Normalise to list-of-lists (R may pass as list of character vectors)
         self.induced_correlations = [list(pair) for pair in induced_correlations] if induced_correlations else []
+        self.latent_method = "correlation" if self.induced_correlations else None
 
     def generate_model_function(self, data_for_compilation=None, force_plate_obs=False):
         """
@@ -233,7 +236,13 @@ class NumPyroBuilder:
                         
                         computed_vars[var] = eval(expr, {"jnp": jnp, "np": np}, local_vars)
                     else:
-                        computed_vars[var] = eval(expr, {"jnp": jnp, "np": np}, computed_vars)
+                        try:
+                            computed_vars[var] = eval(expr, {"jnp": jnp, "np": np}, computed_vars)
+                        except Exception:
+                            # If it fails to evaluate globally (e.g. broadcasting shape mismatch)
+                            # and target_size was None (meaning it's unused in the current equations),
+                            # just skip it. It will raise a KeyError later if it WAS actually needed.
+                            pass
                     continue
                 
                 eq = equations_dict.get(var)
@@ -274,8 +283,17 @@ class NumPyroBuilder:
                 
                 # --- Fixed Effects ---
                 mu = jnp.zeros(target_size)
+                
+                # Use tighter priors for non-linear link functions (GLMs) to prevent MCMC trapping
+                # JAGS uses dnorm(0, 1) for binomial/ordinal, but left poisson at dnorm(0, 0.01) [sd=10]
+                # We apply sd=1.0 to all non-identity link families to ensure robust sampling.
+                if self.prior_scale_fixed is not None:
+                    prior_scale = self.prior_scale_fixed
+                else:
+                    prior_scale = 1.0 if family in ["poisson", "binomial", "bernoulli", "occupancy", "zip", "zinb", "multinomial", "ordinal"] else 10.0
+                
                 if eq["intercept"]:
-                    alpha = numpyro.sample(f"alpha_{var}", dist.Normal(0, 10))
+                    alpha = numpyro.sample(f"alpha_{var}", dist.Normal(0, prior_scale))
                     mu = mu + alpha
                     
                 for pred in eq["fixed"]:
@@ -285,12 +303,12 @@ class NumPyroBuilder:
                         if self.fix_latent == "loading":
                             beta = 1.0
                         elif self.fix_latent == "sign":
-                            beta = numpyro.sample(f"beta_{var}_{pred}", dist.TruncatedNormal(loc=0.0, scale=10.0, low=0.0))
+                            beta = numpyro.sample(f"beta_{var}_{pred}", dist.TruncatedNormal(loc=0.0, scale=prior_scale, low=0.0))
                         else:
-                            beta = numpyro.sample(f"beta_{var}_{pred}", dist.Normal(0, 10))
+                            beta = numpyro.sample(f"beta_{var}_{pred}", dist.Normal(0, prior_scale))
                         local_pinned_latents.add(pred)
                     else:
-                        beta = numpyro.sample(f"beta_{var}_{pred}", dist.Normal(0, 10))
+                        beta = numpyro.sample(f"beta_{var}_{pred}", dist.Normal(0, prior_scale))
                     
                     pred_data = computed_vars[pred]
                     
@@ -379,6 +397,8 @@ class NumPyroBuilder:
                             expected_size = int(data[f"N_{group_name}"])
                         elif group_name in custom_transforms:
                             expected_size = len(custom_transforms[group_name]["matrix"])
+                        elif group_name in L_matrices:
+                            expected_size = L_matrices[group_name].shape[0]
                             
                         if expected_size is not None:
                             # Find which level has this size
@@ -430,7 +450,11 @@ class NumPyroBuilder:
                                     f"during JAX compilation. Please provide '{n_var}' as an integer in your data dictionary."
                                 )
                     
-                    sigma_group = numpyro.sample(f"sigma_{var}_{group_name}", dist.HalfNormal(5))
+                    if family in ["poisson", "binomial", "negbinomial"]:
+                        sigma_group = numpyro.sample(f"sigma_{var}_{group_name}", dist.HalfNormal(1.0))
+                    else:
+                        sigma_group = numpyro.sample(f"sigma_{var}_{group_name}", dist.HalfNormal(5.0))
+
                     with numpyro.plate(f"{var}_{group_name}_plate", num_groups):
                         z_group_raw = numpyro.sample(f"z_{var}_{group_name}_raw", dist.Normal(0, 1))
                     
