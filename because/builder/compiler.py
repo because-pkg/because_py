@@ -498,11 +498,15 @@ class NumPyroBuilder:
                         if L.shape[0] != num_groups:
                             raise ValueError(f"Correlation matrix for '{group_name}' has shape {L.shape} but num_groups is {num_groups}")
                         z_group = jnp.dot(L, z_group_raw)
+                        # Mean-center to resolve confounding with the global intercept
+                        z_group = z_group - jnp.mean(z_group)
                         # Register the correlated z_group for visibility
                         z_group = numpyro.deterministic(f"z_{var}_{group_name}", z_group)
                     else:
                         # Independent random effects
                         z_group = z_group_raw
+                        # Mean-center to resolve confounding with the global intercept
+                        z_group = z_group - jnp.mean(z_group)
                         # Rename deterministic variable for trace parity
                         z_group = numpyro.deterministic(f"z_{var}_{group_name}", z_group)
                         
