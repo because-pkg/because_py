@@ -155,7 +155,7 @@ def get_dsep_equations(equations, latent=None):
     graph.build()
     return graph.generate_dsep_equations(latent=latent)
 
-def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_correlations=None, dsep=False, dsep_only=False, calculate_waic=False, num_samples=1000, num_warmup=500, num_chains=1, thinning=1, n_cores=1, seed=0, dsep_max_obs=2000, quiet=False, dsep_equations_to_run=None, adapt_delta=0.95, fix_latent="loading", prior_scale_fixed=None):
+def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_correlations=None, dsep=False, dsep_only=False, calculate_waic=False, num_samples=1000, num_warmup=500, num_chains=1, thinning=1, n_cores=1, seed=0, dsep_max_obs=2000, quiet=False, dsep_equations_to_run=None, adapt_delta=0.95, max_treedepth=10, fix_latent="loading", prior_scale_fixed=None):
     """
     High-level API for because-py. Fits a causal hierarchical model using NumPyro.
     
@@ -239,7 +239,7 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
         rng_key = jax.random.PRNGKey(seed)
         rng_key, subkey = jax.random.split(rng_key)
         
-        kernel_base = NUTS(model_func, target_accept_prob=adapt_delta, init_strategy=numpyro.infer.init_to_median())
+        kernel_base = NUTS(model_func, target_accept_prob=adapt_delta, max_tree_depth=max_treedepth, init_strategy=numpyro.infer.init_to_median())
         if cor_matrices and any(isinstance(v, dict) and v.get("type") == "multiPhylo" for v in cor_matrices.values()):
             n_trees = int(jax_data.get("Ntree", 10))
             def rw_fn(rng_key, discrete_sites):
@@ -362,7 +362,7 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
         # We run MCMC for the dsep test using the same parameters as the main model
         # To get valid Rhat, we enforce at least 2 chains if the user requested less than 2
         dsep_chains = max(2, num_chains)
-        kernel_base = NUTS(test_model_func, target_accept_prob=adapt_delta, init_strategy=numpyro.infer.init_to_median())
+        kernel_base = NUTS(test_model_func, target_accept_prob=adapt_delta, max_tree_depth=max_treedepth, init_strategy=numpyro.infer.init_to_median())
         if cor_matrices and any(isinstance(v, dict) and v.get("type") == "multiPhylo" for v in cor_matrices.values()):
             n_trees = int(jax_dsep_data.get("Ntree", 10))
             kernel_base = DiscreteHMCGibbs(kernel_base)
