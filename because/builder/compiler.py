@@ -28,6 +28,7 @@ class NumPyroBuilder:
         self.latent_method = "correlation" if self.induced_correlations else None
 
     def generate_model_function(self, data_for_compilation=None, force_plate_obs=False):
+        print("\n\n!!! HELLO FROM PATCHED NUMPYRO BUILDER !!!\n\n")
         """
         Returns a callable python function representing the NumPyro model.
         :param data_for_compilation: Optional dict of the data to statically optimize the JAX trace (e.g. for NaN masking).
@@ -135,11 +136,11 @@ class NumPyroBuilder:
                     for i, comp in enumerate(components):
                         if comp == "indep":
                             # We don't wrap it in deterministic yet so it doesn't conflict with later sigma_{var} definition
-                            var_variances[var][comp] = sigma_tot * jnp.sqrt(props[i])
+                            var_variances[var][comp] = sigma_tot * jnp.sqrt(props[i]) + 1e-3
                         elif comp == "shared":
-                            var_variances[var][comp] = numpyro.deterministic(f"sigma_shared_{var}", sigma_tot * jnp.sqrt(props[i]))
+                            var_variances[var][comp] = numpyro.deterministic(f"sigma_shared_{var}", sigma_tot * jnp.sqrt(props[i]) + 1e-3)
                         else:
-                            var_variances[var][comp] = numpyro.deterministic(f"sigma_{var}_{comp}", sigma_tot * jnp.sqrt(props[i]))
+                            var_variances[var][comp] = numpyro.deterministic(f"sigma_{var}_{comp}", sigma_tot * jnp.sqrt(props[i]) + 1e-3)
 
             for pair in ind_cor_pairs:
                 var1, var2 = pair[0], pair[1]
