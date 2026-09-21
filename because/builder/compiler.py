@@ -28,7 +28,6 @@ class NumPyroBuilder:
         self.latent_method = "correlation" if self.induced_correlations else None
 
     def generate_model_function(self, data_for_compilation=None, force_plate_obs=False):
-        print("\n\n!!! HELLO FROM PATCHED NUMPYRO BUILDER !!!\n\n")
         """
         Returns a callable python function representing the NumPyro model.
         :param data_for_compilation: Optional dict of the data to statically optimize the JAX trace (e.g. for NaN masking).
