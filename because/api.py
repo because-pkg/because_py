@@ -155,7 +155,7 @@ def get_dsep_equations(equations, latent=None):
     graph.build()
     return graph.generate_dsep_equations(latent=latent)
 
-def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_correlations=None, dsep=False, dsep_only=False, calculate_waic=False, num_samples=1000, num_warmup=500, num_chains=1, thinning=1, n_cores=1, seed=0, dsep_max_obs=2000, quiet=False, dsep_equations_to_run=None, adapt_delta=0.95, max_treedepth=10, fix_latent="loading", prior_scale_fixed=None):
+def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_correlations=None, dsep=False, dsep_only=False, calculate_waic=False, num_samples=1000, num_warmup=500, num_chains=1, thinning=1, n_cores=1, seed=0, dsep_max_obs=2000, quiet=False, dsep_equations_to_run=None, adapt_delta=0.95, max_treedepth=10, fix_latent="loading", prior_scale_fixed=None, **kwargs):
     """
     High-level API for because-py. Fits a causal hierarchical model using NumPyro.
     
@@ -174,6 +174,15 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
     
     :return: A dictionary containing the fitted MCMC object and optional dsep results.
     """
+    # Backward compatibility with alternate parameter names
+    if "n_samples" in kwargs:
+        num_samples = kwargs.pop("n_samples")
+    if "n_warmup" in kwargs:
+        num_warmup = kwargs.pop("n_warmup")
+    if "n_chains" in kwargs:
+        num_chains = kwargs.pop("n_chains")
+    if "priors" in kwargs:
+        kwargs.pop("priors")
     if isinstance(equations, str):
         equations = [equations]
         
@@ -647,3 +656,6 @@ def dsep_summary(result, digits=3, verbose=False):
         print(f"D-separation tests: {n_pass}/{n_total} passed. {verdict}\n")
 
     return df
+
+# Alias for backwards compatibility with R package wrappers
+fit_numpyro_model = fit
