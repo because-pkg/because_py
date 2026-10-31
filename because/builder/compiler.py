@@ -124,12 +124,15 @@ class NumPyroBuilder:
                 
                 K = len(components)
                 if K > 1:
-                    sigma_tot = numpyro.sample(f"sigma_tot_{var}", dist.HalfNormal(2.0))
+                    tot_name = f"_sigma_tot_{var}" if var in induced_cor_set else f"sigma_tot_{var}"
+                    sigma_tot = numpyro.sample(tot_name, dist.HalfNormal(2.0))
                     if K == 2:
-                        prop = numpyro.sample(f"prop_{var}", dist.Beta(2.0, 2.0))
+                        prop_name = f"_prop_{var}" if var in induced_cor_set else f"prop_{var}"
+                        prop = numpyro.sample(prop_name, dist.Beta(2.0, 2.0))
                         props = jnp.array([prop, 1.0 - prop])
                     else:
-                        props = numpyro.sample(f"props_{var}", dist.Dirichlet(jnp.ones(K) * 2.0))
+                        props_name = f"_props_{var}" if var in induced_cor_set else f"props_{var}"
+                        props = numpyro.sample(props_name, dist.Dirichlet(jnp.ones(K) * 2.0))
                         
                     var_variances[var] = {}
                     for i, comp in enumerate(components):
@@ -139,7 +142,10 @@ class NumPyroBuilder:
                         elif comp == "shared":
                             var_variances[var][comp] = numpyro.deterministic(f"sigma_shared_{var}", sigma_tot * jnp.sqrt(props[i]) + 1e-3)
                         else:
-                            var_variances[var][comp] = numpyro.deterministic(f"sigma_{var}_{comp}", sigma_tot * jnp.sqrt(props[i]) + 1e-3)
+                            if var not in induced_cor_set:
+                                var_variances[var][comp] = numpyro.deterministic(f"sigma_{var}_{comp}", sigma_tot * jnp.sqrt(props[i]) + 1e-3)
+                            else:
+                                var_variances[var][comp] = sigma_tot * jnp.sqrt(props[i]) + 1e-3
 
             for pair in ind_cor_pairs:
                 var1, var2 = pair[0], pair[1]
