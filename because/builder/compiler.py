@@ -533,11 +533,13 @@ class NumPyroBuilder:
                     distribution = dist.Normal(mu, sigma)
                     
                     # Post-hoc calculate Pagel's lambda for any structural/phylogenetic random effects
-                    for g_name, sig_g in sigma_struct_dict.items():
-                        # lambda = phylo variance / total variance
-                        # total variance = phylo variance + independent residual variance
-                        tot_res_var = sigma**2
-                        numpyro.deterministic(f"lambda_{var}_{g_name}", (sig_g**2) / (sig_g**2 + tot_res_var))
+                    # Skip for latent indicators / induced correlation variables
+                    if var not in induced_cor_set:
+                        for g_name, sig_g in sigma_struct_dict.items():
+                            # lambda = phylo variance / total variance
+                            # total variance = phylo variance + independent residual variance
+                            tot_res_var = sigma**2
+                            numpyro.deterministic(f"lambda_{var}_{g_name}", (sig_g**2) / (sig_g**2 + tot_res_var))
                 elif family == "poisson":
                     distribution = dist.Poisson(rate=jnp.exp(mu))
                 elif family == "binomial":
@@ -836,12 +838,13 @@ class NumPyroBuilder:
                     lines.append(f"{ind()}sigma_{var} = numpyro.sample('sigma_{var}', dist.HalfNormal(2.0))")
                 lines.append(f"{ind()}with numpyro.plate('{var}_plate', N):")
                 lines.append(f"{ind(2)}numpyro.sample('{var}', dist.Normal(mu_{var}, sigma_{var}), obs={var})")
-                for grp in sigma_struct_names:
-                    lines.append(f"{ind()}numpyro.deterministic('lambda_{var}_{grp}',")
-                    if var in var_variances:
-                        lines.append(f"{ind()}    sigma_{var}_{grp}**2 / (sigma_{var}_{grp}**2 + sigma_total_{var}**2))")
-                    else:
-                        lines.append(f"{ind()}    sigma_{var}_{grp}**2 / (sigma_{var}_{grp}**2 + sigma_{var}**2))")
+                if var not in induced_cor_set:
+                    for grp in sigma_struct_names:
+                        lines.append(f"{ind()}numpyro.deterministic('lambda_{var}_{grp}',")
+                        if var in var_variances:
+                            lines.append(f"{ind()}    sigma_{var}_{grp}**2 / (sigma_{var}_{grp}**2 + sigma_total_{var}**2))")
+                        else:
+                            lines.append(f"{ind()}    sigma_{var}_{grp}**2 / (sigma_{var}_{grp}**2 + sigma_{var}**2))")
             elif family == "poisson":
                 lines.append(f"{ind()}with numpyro.plate('{var}_plate', N):")
                 lines.append(f"{ind(2)}numpyro.sample('{var}', dist.Poisson(rate=jnp.exp(mu_{var})), obs={var})")
