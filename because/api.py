@@ -414,7 +414,8 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
                 "ci_97.5": ci_upper,
                 "is_independent": is_independent,
                 "rhat": rhat,
-                "n_eff": n_eff
+                "n_eff": n_eff,
+                "samples": np.asarray(posteriors).tolist()
             })
             
     results["dsep_results"] = dsep_results
