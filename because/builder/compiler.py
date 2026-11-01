@@ -4,7 +4,7 @@ class NumPyroBuilder:
     """
     Takes a parsed causal graph and generates the dynamic NumPyro model via a closure.
     """
-    def __init__(self, causal_graph, family_dict=None, deterministic_terms=None, cor_matrices=None, fix_latent="loading", induced_correlations=None, prior_scale_fixed=None):
+    def __init__(self, causal_graph, family_dict=None, deterministic_terms=None, cor_matrices=None, fix_latent="loading", induced_correlations=None, prior_scale_fixed=None, levels=None):
         """
         :param causal_graph: The compiled CausalGraph object.
         :param family_dict: Dictionary specifying families (e.g. {"y": "poisson"}). Default is "gaussian".
@@ -14,6 +14,7 @@ class NumPyroBuilder:
         :param induced_correlations: List of variable-pair lists/tuples for MAG induced correlations.
             e.g. [["Brain", "Mass"]] means Brain and Mass share a correlated residual.
         :param prior_scale_fixed: Optional dictionary for fixing prior scales.
+        :param levels: Optional dictionary mapping level names to variable/structure names.
         """
         self.graph = causal_graph
         self.parsed_equations = {eq["response"]: eq for eq in causal_graph.parsed_equations.values() if eq["response"]}
@@ -23,6 +24,15 @@ class NumPyroBuilder:
         self.fix_latent = fix_latent
         self.pinned_latents = set()
         self.prior_scale_fixed = prior_scale_fixed
+        self.levels = levels or {}
+        self.var_to_level = {}
+        if isinstance(self.levels, dict):
+            for lvl, vars_in_lvl in self.levels.items():
+                if isinstance(vars_in_lvl, (list, tuple, set)):
+                    for v in vars_in_lvl:
+                        self.var_to_level[str(v)] = str(lvl)
+                elif isinstance(vars_in_lvl, str):
+                    self.var_to_level[vars_in_lvl] = str(lvl)
         # Normalise to list-of-lists (R may pass as list of character vectors)
         self.induced_correlations = [list(pair) for pair in induced_correlations] if induced_correlations else []
         self.latent_method = "correlation" if self.induced_correlations else None
@@ -59,8 +69,9 @@ class NumPyroBuilder:
             for v in cor_mats.values()
         )
         
-        # Capture induced correlations for closure
+        # Capture induced correlations and level map for closure
         induced_correlations_closure = self.induced_correlations
+        var_to_level = self.var_to_level
         
         def numpyro_model(**kwargs):
             data = kwargs.copy()
@@ -209,12 +220,15 @@ class NumPyroBuilder:
                 if var in det_terms:
                     expr = det_terms[var]["expression"]
                     target_size = None
+                    parent_var = None
                     if f"N_{var}" in data:
                         target_size = int(data[f"N_{var}"])
+                        parent_var = var
                     else:
                         # Find the parent node that uses this deterministic term
                         for p_var, eq in equations_dict.items():
                             if var in eq.get("fixed", []) or var in eq.get("random", []):
+                                parent_var = p_var
                                 if p_var in data:
                                     target_size = data[p_var].shape[0]
                                 elif f"N_{p_var}" in data:
@@ -244,8 +258,8 @@ class NumPyroBuilder:
                                                 candidates.append(lname)
                                     return candidates
                                 
-                                source_levels = get_level_name(v_size)
-                                target_levels = get_level_name(target_size)
+                                source_levels = [var_to_level[v]] if v in var_to_level else get_level_name(v_size)
+                                target_levels = [var_to_level[parent_var]] if (parent_var and parent_var in var_to_level) else get_level_name(target_size)
                                 
                                 idx_array = None
                                 for s in source_levels:
@@ -359,9 +373,11 @@ class NumPyroBuilder:
                                     if not lname.isupper() and "ID" not in lname and "_id" not in lname:
                                         candidates.append(lname)
                             return candidates
-                            
-                        source_levels = get_level_name(min_len)
-                        target_levels = get_level_name(max_len)
+                        
+                        coarse_var = pred if pred_data.shape[0] < target_size else var
+                        fine_var = var if pred_data.shape[0] < target_size else pred
+                        source_levels = [var_to_level[coarse_var]] if coarse_var in var_to_level else get_level_name(min_len)
+                        target_levels = [var_to_level[fine_var]] if fine_var in var_to_level else get_level_name(max_len)
                         
                         idx_array = None
                         for s in source_levels:
@@ -418,15 +434,16 @@ class NumPyroBuilder:
                         possible_idx = [k for k in data.keys() if "idx" in k and hasattr(data[k], "shape") and len(data[k].shape) > 0 and data[k].shape[0] == target_size]
                         
                         # Try to find the exact match using the base level name if possible
-                        level_name = group_name
-                        if hasattr(self.graph, 'levels') and self.graph.levels:
+                        level_name = None
+                        if group_name in var_to_level:
+                            level_name = var_to_level[group_name]
+                        elif hasattr(self.graph, 'levels') and self.graph.levels:
                             for lvl, vars_in_lvl in self.graph.levels.items():
                                 if group_name in vars_in_lvl:
                                     level_name = lvl
                                     break
                                     
-                        # If it's a custom structure (e.g., phylo), it might not be in levels.
-                        # But we can figure out its level by matching its required size.
+                        # Determine expected_size for num_groups fallback
                         expected_size = None
                         if f"N_{group_name}" in data:
                             expected_size = int(data[f"N_{group_name}"])
@@ -435,7 +452,7 @@ class NumPyroBuilder:
                         elif group_name in L_matrices:
                             expected_size = L_matrices[group_name].shape[0]
                             
-                        if expected_size is not None:
+                        if level_name is None and expected_size is not None:
                             # Find which level has this size
                             for k, v in data.items():
                                 if k.startswith("N_") and not k.endswith("ID") and not k.endswith("_id") and isinstance(v, (int, float, np.integer, np.floating)):
@@ -445,12 +462,17 @@ class NumPyroBuilder:
                                         if any(idx.startswith(f"{potential_lvl}_idx_") for idx in possible_idx):
                                             level_name = potential_lvl
                                             break
+                        if level_name is None:
+                            level_name = group_name
 
                         best_idx = None
-                        for k in possible_idx:
-                            if k.startswith(f"{level_name}_idx_"):
-                                best_idx = k
-                                break
+                        if var in var_to_level and f"{level_name}_idx_{var_to_level[var]}" in data:
+                            best_idx = f"{level_name}_idx_{var_to_level[var]}"
+                        else:
+                            for k in possible_idx:
+                                if k.startswith(f"{level_name}_idx_"):
+                                    best_idx = k
+                                    break
                         
                         if best_idx:
                             group_idx = data[best_idx]

@@ -155,7 +155,7 @@ def get_dsep_equations(equations, latent=None):
     graph.build()
     return graph.generate_dsep_equations(latent=latent)
 
-def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_correlations=None, dsep=False, dsep_only=False, calculate_waic=False, num_samples=1000, num_warmup=500, num_chains=1, thinning=1, n_cores=1, seed=0, dsep_max_obs=2000, quiet=False, dsep_equations_to_run=None, adapt_delta=0.95, max_treedepth=10, fix_latent="loading", prior_scale_fixed=None, **kwargs):
+def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_correlations=None, dsep=False, dsep_only=False, calculate_waic=False, num_samples=1000, num_warmup=500, num_chains=1, thinning=1, n_cores=1, seed=0, dsep_max_obs=2000, quiet=False, dsep_equations_to_run=None, adapt_delta=0.95, max_treedepth=10, fix_latent="loading", prior_scale_fixed=None, levels=None, **kwargs):
     """
     High-level API for because-py. Fits a causal hierarchical model using NumPyro.
     
@@ -226,7 +226,7 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
         print(f"   Unobserved stochastic nodes: {unobserved}")
         print("\nInitializing model")
         
-    compiler = NumPyroBuilder(graph, family_dict=family, deterministic_terms=deterministic_terms, cor_matrices=cor_matrices, fix_latent=fix_latent, induced_correlations=induced_correlations, prior_scale_fixed=prior_scale_fixed)
+    compiler = NumPyroBuilder(graph, family_dict=family, deterministic_terms=deterministic_terms, cor_matrices=cor_matrices, fix_latent=fix_latent, induced_correlations=induced_correlations, prior_scale_fixed=prior_scale_fixed, levels=levels)
     model_func = compiler.generate_model_function(data_for_compilation=data)
     # Generate human-readable Python source for inspection / because_continue()
     try:
@@ -355,14 +355,15 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
             test_desc = "(Induced Correlation)" if claim_type == "correlation" else "(Conditional Independence)"
             print(f"\n[Test {i+1} / {len(dsep_equations)}]  {eq_str}  {test_desc}")
             
-        compile_eq_str = eq_str
+        compile_eq_str = claim.get("compile_equation_string", eq_str)
             
         test_parser = FormulaParser([compile_eq_str])
         test_parsed = test_parser.parse()
-        test_graph = CausalGraph(test_parsed, deterministic_terms=deterministic_terms)
+        test_det_terms = {**(deterministic_terms or {}), **(test_parser.deterministic_terms or {})}
+        test_graph = CausalGraph(test_parsed, deterministic_terms=test_det_terms)
         test_graph.build()
         
-        test_compiler = NumPyroBuilder(test_graph, family_dict=family, deterministic_terms=deterministic_terms, cor_matrices=cor_matrices, fix_latent=fix_latent, prior_scale_fixed=prior_scale_fixed)
+        test_compiler = NumPyroBuilder(test_graph, family_dict=family, deterministic_terms=test_det_terms, cor_matrices=cor_matrices, fix_latent=fix_latent, prior_scale_fixed=prior_scale_fixed, levels=levels)
 
         test_model_func = test_compiler.generate_model_function(data_for_compilation=dsep_data)
         
