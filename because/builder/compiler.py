@@ -83,8 +83,8 @@ class NumPyroBuilder:
             
             computed_vars = dict(data)
             
-            # Infer dataset size N
-            N = len(next(iter(data.values()))) if data else 1
+            # Infer dataset size N from the first 1D+ array in data
+            N = next((v.shape[0] for v in data.values() if hasattr(v, "shape") and len(v.shape) > 0), 1)
             
             shared_state = {}
             local_pinned_latents = set()
@@ -415,6 +415,131 @@ class NumPyroBuilder:
                     else:
                         mu = mu + beta * pred_data
                     
+                # Check for missing data early so we know if Spectral Gaussian Marginalization is eligible
+                has_nans = False
+                if data_for_compilation is not None and var in data_for_compilation:
+                    import numpy as np
+                    np_data = np.asarray(data_for_compilation[var])
+                    has_nans = bool(np.isnan(np_data).any())
+                    if has_nans:
+                        missing_idx = jnp.array(np.where(np.isnan(np_data))[0])
+                        obs_idx = jnp.array(np.where(~np.isnan(np_data))[0])
+
+                # --- Full Spectral Gaussian Marginalization (for multiPhylo dcat) ---
+                # When tree_method = "dcat" (has_multiPhylo=True), any observed Gaussian equation
+                # without missing data and with a single species-level multiPhylo random effect
+                # integrates out the N-dimensional phylogenetic random effect u_phylo analytically
+                # in the tree's eigenbasis:
+                #   Q_K^T (y - mu) ~ Normal(0, sqrt(sigma_phylo^2 * d_K + sigma_res^2))
+                can_spectral_marginalize = False
+                spectral_group_name = None
+                if (
+                    has_multiPhylo
+                    and family == "gaussian"
+                    and not is_latent
+                    and obs_data is not None
+                    and not has_nans
+                    and len(eq.get("random", [])) == 1
+                ):
+                    import re
+                    m_rand = re.search(r"\(1\s*\|\s*([^)]+)\)", eq["random"][0])
+                    if m_rand:
+                        cand_grp = m_rand.group(1).strip()
+                        if (
+                            cand_grp in custom_transforms
+                            and custom_transforms[cand_grp].get("type") == "multiPhylo"
+                            and isinstance(custom_transforms[cand_grp].get("matrix"), dict)
+                            and "eigvals" in custom_transforms[cand_grp]["matrix"]
+                            and "eigvecs" in custom_transforms[cand_grp]["matrix"]
+                        ):
+                            eigvals_mat = custom_transforms[cand_grp]["matrix"]["eigvals"]
+                            if eigvals_mat.shape[0] == target_size:
+                                can_spectral_marginalize = True
+                                spectral_group_name = cand_grp
+
+                if can_spectral_marginalize:
+                    group_name = spectral_group_name
+                    if group_name not in data:
+                        raise ValueError(f"Grouping variable '{group_name}' not found in data.")
+                    group_idx = data[group_name]
+
+                    if var in var_variances and group_name in var_variances[var]:
+                        sigma_group = var_variances[var][group_name]
+                    else:
+                        sigma_group = numpyro.sample(f"sigma_{var}_{group_name}", dist.HalfNormal(2.0))
+
+                    if var in var_variances and "indep" in var_variances[var]:
+                        sigma = numpyro.deterministic(f"sigma_{var}", var_variances[var]["indep"])
+                    else:
+                        sigma = numpyro.sample(f"sigma_{var}", dist.HalfNormal(2.0))
+
+                    if var not in induced_cor_set:
+                        numpyro.deterministic(
+                            f"lambda_{var}_{group_name}",
+                            (sigma_group ** 2) / (sigma_group ** 2 + sigma ** 2)
+                        )
+
+                    # Add any latent induced correlation errors to the structural mean before spectral projection
+                    if var in induced_err_storage:
+                        for err in induced_err_storage[var]:
+                            mu = mu + err
+
+                    matrix_dict = custom_transforms[group_name]["matrix"]
+                    eigvals_all = jnp.array(matrix_dict["eigvals"])
+                    eigvecs_all = jnp.array(matrix_dict["eigvecs"])
+                    n_trees = eigvals_all.shape[-1]
+
+                    k_name = f"K_tree_{group_name}"
+                    if "_active_tree_idx" in matrix_dict and matrix_dict["_active_tree_idx"] is not None:
+                        K = matrix_dict["_active_tree_idx"]
+                        if k_name not in shared_state:
+                            shared_state[k_name] = numpyro.deterministic(k_name, K + 1)
+                    else:
+                        if k_name not in shared_state:
+                            shared_state[k_name] = numpyro.sample(
+                                k_name, dist.Categorical(probs=jnp.ones(n_trees) / n_trees)
+                            )
+                        K = shared_state[k_name]
+
+                    eigvals = jnp.take(eigvals_all, K, axis=-1)
+                    if eigvals.ndim > 1:
+                        eigvals = jnp.moveaxis(eigvals, 0, -1)
+
+                    eigvecs = jnp.take(eigvecs_all, K, axis=-1)
+                    if eigvecs.ndim > 2:
+                        eigvecs = jnp.moveaxis(eigvecs, [0, 1], [-2, -1])
+
+                    eigvals_safe = jnp.maximum(eigvals, 1e-8)
+                    eigvecs_aligned = eigvecs[..., group_idx, :]
+
+                    res = obs_data - mu
+                    tilde_r = jnp.einsum("...ij,...i->...j", eigvecs_aligned, res)
+                    tot_eig_var = (sigma_group ** 2) * eigvals_safe + (sigma ** 2)
+                    tot_eig_sd = jnp.sqrt(tot_eig_var)
+
+                    # Analytical conditional posterior expectation (spectral BLUP) for u_{var}_{group_name}
+                    tilde_u_mean = ((sigma_group ** 2) * eigvals_safe / tot_eig_var) * tilde_r
+                    u_group = jnp.einsum("...ij,...j->...i", eigvecs, tilde_u_mean)
+                    u_group = u_group - jnp.mean(u_group, axis=-1, keepdims=True)
+                    u_group = numpyro.deterministic(f"u_{var}_{group_name}", u_group)
+
+                    if not force_plate_obs:
+                        numpyro.sample(
+                            var,
+                            dist.Normal(tilde_r, tot_eig_sd).to_event(1),
+                            obs=jnp.zeros_like(obs_data)
+                        )
+                    else:
+                        with numpyro.plate(f"{var}_plate", target_size):
+                            numpyro.sample(
+                                var,
+                                dist.Normal(mu + u_group[..., group_idx], sigma),
+                                obs=obs_data
+                            )
+
+                    computed_vars[var] = obs_data
+                    continue
+
                 # Dictionary to store structural standard deviations for lambda calculation
                 sigma_struct_dict = {}
                 

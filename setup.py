@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="because_py",
-    version="0.2.10",
+    version="0.2.11",
     description="Python NumPyro backend for the R 'because' package",
     author="because-pkg",
     url="https://github.com/because-pkg/because_py",

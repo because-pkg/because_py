@@ -30,6 +30,37 @@ DiscreteHMCGibbs  = None
 diag              = None
 
 
+def _detect_available_cores() -> int:
+    """Detect allocated CPU cores across SLURM/PBS/SGE/LSF, cgroups, or local OS."""
+    for env_var in (
+        "SLURM_CPUS_PER_TASK",
+        "SLURM_CPUS_ON_NODE",
+        "PBS_NP",
+        "NSLOTS",
+        "LSB_DJOB_NUMPROC",
+        "MC_CORES",
+    ):
+        val = os.environ.get(env_var, "").strip()
+        if val.isdigit() and int(val) > 0:
+            return int(val)
+    try:
+        if os.path.exists("/sys/fs/cgroup/cpu.max"):
+            with open("/sys/fs/cgroup/cpu.max", "r") as f:
+                parts = f.read().strip().split()
+                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                    quota, period = int(parts[0]), int(parts[1])
+                    if quota > 0 and period > 0:
+                        return max(1, quota // period)
+        elif os.path.exists("/sys/fs/cgroup/cpu/cpu.cfs_quota_us") and os.path.exists("/sys/fs/cgroup/cpu/cpu.cfs_period_us"):
+            with open("/sys/fs/cgroup/cpu/cpu.cfs_quota_us", "r") as fq, open("/sys/fs/cgroup/cpu/cpu.cfs_period_us", "r") as fp:
+                quota, period = int(fq.read().strip()), int(fp.read().strip())
+                if quota > 0 and period > 0:
+                    return max(1, quota // period)
+    except Exception:
+        pass
+    return max(1, (os.cpu_count() or 2) - 1)
+
+
 def _init_jax(n_cores: int = 1) -> None:
     """
     Lazily initialise JAX and NumPyro with thread limits already set.
@@ -50,6 +81,12 @@ def _init_jax(n_cores: int = 1) -> None:
 
     if _jax_initialized:
         return
+
+    avail_cores = _detect_available_cores()
+    thread_limit = max(1, int(n_cores), avail_cores)
+    # Allocate sufficient logical XLA CPU devices so subsequent fit() calls in
+    # the same session can vary n_cores freely without restarting Python/R.
+    host_devices = max(int(n_cores), avail_cores, 32)
 
     # ------------------------------------------------------------------ #
     # Detect whether JAX was already imported by external code (e.g. the  #
@@ -84,8 +121,8 @@ def _init_jax(n_cores: int = 1) -> None:
             "MKL_DOMAIN_NUM_THREADS":        "1",
             "NUMEXPR_NUM_THREADS":           "1",
             "LLVM_NUM_THREADS":              "1",   # llvm-worker-N threads
-            "TF_NUM_INTEROP_THREADS":        str(n_cores),
-            "TF_NUM_INTRAOP_THREADS":        str(n_cores),
+            "TF_NUM_INTEROP_THREADS":        str(thread_limit),
+            "TF_NUM_INTRAOP_THREADS":        str(thread_limit),
             "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
         }
         for k, v in _thread_env.items():
@@ -95,13 +132,13 @@ def _init_jax(n_cores: int = 1) -> None:
         existing_xla = os.environ.get("XLA_FLAGS", "")
         new_flags = []
         if "--xla_force_host_platform_device_count" not in existing_xla:
-            new_flags.append(f"--xla_force_host_platform_device_count={n_cores}")
+            new_flags.append(f"--xla_force_host_platform_device_count={host_devices}")
         if "--xla_cpu_multi_thread_eigen" not in existing_xla:
             new_flags.append("--xla_cpu_multi_thread_eigen=false")
         if "intra_op_parallelism_threads" not in existing_xla:
-            new_flags.append(f"intra_op_parallelism_threads={n_cores}")
+            new_flags.append(f"intra_op_parallelism_threads={thread_limit}")
         if "inter_op_parallelism_threads" not in existing_xla:
-            new_flags.append(f"inter_op_parallelism_threads={n_cores}")
+            new_flags.append(f"inter_op_parallelism_threads={thread_limit}")
         if new_flags:
             os.environ["XLA_FLAGS"] = (existing_xla + " " + " ".join(new_flags)).strip()
 
@@ -134,12 +171,12 @@ def _init_jax(n_cores: int = 1) -> None:
     DiscreteHMCGibbs = _DiscreteHMCGibbs
 
     # numpyro.set_host_device_count MUST be called before any JAX computation
-    if n_cores > 1 and not jax_already_loaded:
+    if host_devices > 1 and not jax_already_loaded:
         try:
-            _numpyro.set_host_device_count(n_cores)
+            _numpyro.set_host_device_count(host_devices)
         except Exception as exc:
             warnings.warn(
-                f"because: numpyro.set_host_device_count({n_cores}) failed: {exc}",
+                f"because: numpyro.set_host_device_count({host_devices}) failed: {exc}",
                 RuntimeWarning,
             )
 
@@ -243,76 +280,251 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
             jax_data[k] = jnp.array(v)
     
     results = {}
-    
+
+    def _wrap_ensemble_model(orig_fn, cor_mats, static_data):
+        def _ensemble_model(_tree_idx=None, **override_kwargs):
+            if _tree_idx is not None and cor_mats:
+                for v in cor_mats.values():
+                    if isinstance(v, dict) and v.get("type") == "multiPhylo_ensemble":
+                        v["matrix"]["_active_tree_idx"] = _tree_idx
+            merged = dict(static_data)
+            if override_kwargs:
+                merged.update(override_kwargs)
+            return orig_fn(**merged)
+        return _ensemble_model
+
+    def _run_ensemble_chains(rng_key, ens_model_func, data_dict, n_trees, n_chains, n_cores_req, show_progress=True):
+        total_chains = int(n_trees * n_chains)
+        avail_devices = int(jax.local_device_count())
+        if show_progress and int(n_cores_req) > 1 and avail_devices < min(int(n_cores_req), total_chains):
+            print(
+                f"  [MultiPhylo Ensemble] WARNING: Only {avail_devices} XLA CPU device(s) active in this R session "
+                f"(requested n.cores={n_cores_req}). Please restart R ('Session -> Restart R') once "
+                f"so JAX can allocate all {n_cores_req} CPU cores in parallel."
+            )
+        W = int(min(max(1, int(n_cores_req)), avail_devices, total_chains))
+        kernel_base = NUTS(
+            ens_model_func,
+            target_accept_prob=adapt_delta,
+            max_tree_depth=max_treedepth,
+            init_strategy=numpyro.infer.init_to_median(),
+        )
+
+        if W > 1:
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message=".*There are not enough devices.*")
+                mcmc_obj = MCMC(
+                    kernel_base,
+                    num_warmup=num_warmup,
+                    num_samples=num_samples,
+                    num_chains=1,
+                    thinning=thinning,
+                    chain_method="sequential",
+                    jit_model_args=True,
+                    progress_bar=False,
+                )
+            # Pre-initialize sampler state & cached functions on the host once before pmap
+            rng_key, init_key = jax.random.split(rng_key)
+            init_kw = {"_tree_idx": jnp.int32(0)}
+            mcmc_obj._args = ()
+            mcmc_obj._kwargs = init_kw
+            mcmc_obj.sampler.init(init_key, mcmc_obj.num_warmup, init_params=None, model_args=(), model_kwargs=init_kw)
+            mcmc_obj._get_cached_fns()
+            collect_fields = (mcmc_obj._sample_field,) + tuple(mcmc_obj._default_fields)
+
+            def _pmap_single_chain(chain_rng_key, tree_idx):
+                states, _ = mcmc_obj._single_chain_mcmc(
+                    (chain_rng_key, None, None),
+                    args=(),
+                    kwargs={"_tree_idx": tree_idx},
+                    collect_fields=collect_fields,
+                    remove_sites=(),
+                )
+                return states[mcmc_obj._sample_field]
+
+            pmap_fn = jax.pmap(_pmap_single_chain, devices=jax.local_devices()[:W])
+            all_tree_indices = np.repeat(np.arange(n_trees, dtype=np.int32), n_chains)
+            n_waves = int(np.ceil(total_chains / W))
+            collected_chunks = []
+
+            for w in range(n_waves):
+                start_i = w * W
+                end_i = min(total_chains, (w + 1) * W)
+                chunk_indices = all_tree_indices[start_i:end_i]
+                chunk_len = len(chunk_indices)
+                if show_progress:
+                    t_min, t_max = int(chunk_indices[0]) + 1, int(chunk_indices[-1]) + 1
+                    tree_span = f"Tree {t_min}" if t_min == t_max else f"Trees {t_min}..{t_max}"
+                    print(f"  [MultiPhylo Ensemble: Wave {w+1}/{n_waves}] Running {chunk_len} chain(s) in parallel across {W} CPU cores ({tree_span})...")
+                rng_key, wave_key = jax.random.split(rng_key)
+                wave_keys = jax.random.split(wave_key, W)
+                if chunk_len < W:
+                    pad_indices = np.pad(chunk_indices, (0, W - chunk_len), mode="edge")
+                else:
+                    pad_indices = chunk_indices
+                wave_out = pmap_fn(wave_keys, jnp.asarray(pad_indices, dtype=jnp.int32))
+                collected_chunks.append({
+                    param: np.asarray(val)[:chunk_len] for param, val in wave_out.items()
+                })
+
+            numpy_samples_all = {
+                param: np.concatenate([ch[param] for ch in collected_chunks], axis=0)
+                for param in collected_chunks[0].keys()
+            }
+
+            # Inject 1-based tree index parameter for multiPhylo ensemble monitoring
+            k_tree_var = None
+            if cor_matrices:
+                for k_struct, v_struct in cor_matrices.items():
+                    if isinstance(v_struct, dict) and v_struct.get("type") == "multiPhylo_ensemble":
+                        k_tree_var = f"K_tree_{k_struct}"
+                        break
+            if k_tree_var is None:
+                k_tree_var = "K_tree_multiPhylo"
+
+            if len(numpy_samples_all) > 0:
+                first_param_arr = next(iter(numpy_samples_all.values()))
+                num_post_warmup = first_param_arr.shape[1]
+                k_tree_matrix = np.tile((all_tree_indices + 1)[:, None], (1, num_post_warmup)).astype(np.float64)
+                numpy_samples_all[k_tree_var] = k_tree_matrix
+
+            tree_samples_list = []
+            for k in range(n_trees):
+                c_start = k * n_chains
+                c_end = (k + 1) * n_chains
+                tree_samples_list.append({
+                    param: val[c_start:c_end] for param, val in numpy_samples_all.items()
+                })
+            return rng_key, mcmc_obj, tree_samples_list, numpy_samples_all
+        else:
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message=".*There are not enough devices.*")
+                mcmc_obj = MCMC(
+                    kernel_base,
+                    num_warmup=num_warmup,
+                    num_samples=num_samples,
+                    num_chains=n_chains,
+                    thinning=thinning,
+                    chain_method="sequential",
+                    jit_model_args=True,
+                    progress_bar=show_progress,
+                )
+            tree_samples_list = []
+            for k in range(n_trees):
+                if show_progress:
+                    print(f"  [MultiPhylo Ensemble: Tree {k+1}/{n_trees}] Sampling {n_chains} chain(s) sequentially...")
+                rng_key, subkey = jax.random.split(rng_key)
+                mcmc_obj.run(subkey, _tree_idx=jnp.int32(k))
+                s_k = mcmc_obj.get_samples(group_by_chain=True)
+                tree_samples_list.append({param: np.asarray(val) for param, val in s_k.items()})
+            numpy_samples_all = {
+                param: np.concatenate([ts[param] for ts in tree_samples_list], axis=0)
+                for param in tree_samples_list[0].keys()
+            }
+
+            k_tree_var = None
+            if cor_matrices:
+                for k_struct, v_struct in cor_matrices.items():
+                    if isinstance(v_struct, dict) and v_struct.get("type") == "multiPhylo_ensemble":
+                        k_tree_var = f"K_tree_{k_struct}"
+                        break
+            if k_tree_var is None:
+                k_tree_var = "K_tree_multiPhylo"
+
+            all_tree_indices = np.repeat(np.arange(n_trees, dtype=np.int32), n_chains)
+            if len(numpy_samples_all) > 0:
+                first_param_arr = next(iter(numpy_samples_all.values()))
+                num_post_warmup = first_param_arr.shape[1]
+                k_tree_matrix = np.tile((all_tree_indices + 1)[:, None], (1, num_post_warmup)).astype(np.float64)
+                numpy_samples_all[k_tree_var] = k_tree_matrix
+                for k in range(n_trees):
+                    tree_samples_list[k][k_tree_var] = np.full((n_chains, num_post_warmup), k + 1, dtype=np.float64)
+
+            return rng_key, mcmc_obj, tree_samples_list, numpy_samples_all
+
+    ensemble_structs = [
+        v for v in (cor_matrices or {}).values()
+        if isinstance(v, dict) and v.get("type") == "multiPhylo_ensemble"
+    ]
+    has_multiPhylo_ensemble = len(ensemble_structs) > 0
+
     if not dsep_only:
         rng_key = jax.random.PRNGKey(seed)
-        rng_key, subkey = jax.random.split(rng_key)
-        
-        kernel_base = NUTS(model_func, target_accept_prob=adapt_delta, max_tree_depth=max_treedepth, init_strategy=numpyro.infer.init_to_median())
-        if cor_matrices and any(isinstance(v, dict) and v.get("type") == "multiPhylo" for v in cor_matrices.values()):
-            n_trees = int(jax_data.get("Ntree", 10))
-            def rw_fn(rng_key, discrete_sites):
-                new_sites = {}
-                for k, v in discrete_sites.items():
-                    if k.startswith("K_tree"):
-                        new_sites[k] = jax.random.randint(rng_key, shape=jnp.shape(v), minval=0, maxval=n_trees)
-                    else:
-                        new_sites[k] = v
-                return new_sites
-            kernel_base = DiscreteHMCGibbs(kernel_base)
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message="There are not enough devices")
-            mcmc = MCMC(kernel_base, num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains, thinning=thinning, progress_bar=False)
-        
-        mcmc.run(subkey, **jax_data)
-        
-        samples = mcmc.get_samples(group_by_chain=True)
-        
-        # Format samples dictionary (convert Jax arrays to pure numpy arrays for easy reticulate conversion)
-        numpy_samples = {k: np.asarray(v) for k, v in samples.items()}
-        
-        # Add basic convergence diagnostics if possible (num_chains > 1)
-        # We can implement basic rhat/ess here if requested, but typically standard packages do this better.
-        
+
+        if has_multiPhylo_ensemble:
+            n_trees = int(ensemble_structs[0].get("n_trees", jax_data.get("Ntree", 10)))
+            ens_n_chains = int(ensemble_structs[0].get("n_chains", ensemble_structs[0].get("chains_per_tree", num_chains if num_chains > 1 else 2)))
+            ens_model_func = _wrap_ensemble_model(model_func, cor_matrices, jax_data)
+            rng_key, mcmc, tree_samples_list, numpy_samples = _run_ensemble_chains(
+                rng_key, ens_model_func, jax_data, n_trees, ens_n_chains, n_cores, show_progress=not quiet
+            )
+        else:
+            rng_key, subkey = jax.random.split(rng_key)
+            kernel_base = NUTS(model_func, target_accept_prob=adapt_delta, max_tree_depth=max_treedepth, init_strategy=numpyro.infer.init_to_median())
+            if cor_matrices and any(isinstance(v, dict) and v.get("type") == "multiPhylo" for v in cor_matrices.values()):
+                n_trees = int(jax_data.get("Ntree", 10))
+                def rw_fn(rng_key, discrete_sites):
+                    new_sites = {}
+                    for k, v in discrete_sites.items():
+                        if k.startswith("K_tree"):
+                            new_sites[k] = jax.random.randint(rng_key, shape=jnp.shape(v), minval=0, maxval=n_trees)
+                        else:
+                            new_sites[k] = v
+                    return new_sites
+                kernel_base = DiscreteHMCGibbs(kernel_base)
+            avail_devices = int(jax.local_device_count())
+            c_method = "parallel" if (int(n_cores) > 1 and int(num_chains) > 1 and avail_devices >= int(num_chains)) else "sequential"
+            if not quiet and int(num_chains) > 1:
+                if c_method == "parallel":
+                    print(f"  [NumPyro MCMC] Running {num_chains} chains in parallel across {num_chains} CPU cores...")
+                elif int(n_cores) > 1 and avail_devices < int(num_chains):
+                    print(
+                        f"  [NumPyro MCMC] WARNING: Only {avail_devices} XLA CPU device(s) active in this R session "
+                        f"(requested n.cores={n_cores} for {num_chains} chains). "
+                        f"Falling back to sequential chains. Please restart R ('Session -> Restart R') once "
+                        f"so JAX can allocate multiple CPU cores in parallel."
+                    )
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message=".*There are not enough devices.*")
+                mcmc = MCMC(kernel_base, num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains, thinning=thinning, chain_method=c_method, progress_bar=not quiet)
+
+            mcmc.run(subkey, **jax_data)
+
+            samples = mcmc.get_samples(group_by_chain=True)
+            numpy_samples = {k: np.asarray(v) for k, v in samples.items()}
+
         results["samples"] = numpy_samples
         results["mcmc"] = mcmc
         results["parameter_map"] = None
         results["model_string"] = "NumPyro Causal Hierarchical Model"  # legacy placeholder
         results["model_code"] = model_code_str  # executable Python source string
-        
+
         if calculate_waic:
             if not quiet:
                 print("Calculating WAIC...")
-            
-            # For multiPhylo, the exact Gibbs kernel requires `.to_event(1)` on the observation sites,
-            # which collapses the log-likelihood to a scalar per chain/sample, preventing pointwise WAIC calculation.
-            # We must rebuild the model using standard `numpyro.plate` specifically for WAIC evaluation.
+
             has_multiPhylo = cor_matrices and any(isinstance(v, dict) and v.get("type") == "multiPhylo" for v in cor_matrices.values())
-            if has_multiPhylo:
+            if has_multiPhylo_ensemble:
+                results["waic"] = _calculate_waic_ensemble(ens_model_func, tree_samples_list, jax_data)
+            elif has_multiPhylo:
                 waic_model_func = compiler.generate_model_function(data_for_compilation=data, force_plate_obs=True)
+                results["waic"] = _calculate_waic_internal(waic_model_func, mcmc, jax_data)
             else:
-                waic_model_func = model_func
-                
-            results["waic"] = _calculate_waic_internal(waic_model_func, mcmc, jax_data)
-            
+                results["waic"] = _calculate_waic_internal(model_func, mcmc, jax_data)
+
     else:
         # We just need a dummy rng key
         rng_key = jax.random.PRNGKey(seed)
-        
+
     if not dsep:
         return results
-        
+
     # D-Separation Testing (and M-Separation)
     # ----------------------------------------------------
-    # If dsep_equations_to_run is provided as a list of dicts, it comes pre-computed
-    # from the R package (which uses dagitty's optimal MAG logic).
     if dsep_equations_to_run is not None and len(dsep_equations_to_run) > 0 and isinstance(dsep_equations_to_run[0], dict):
         dsep_equations = dsep_equations_to_run
     else:
-        # Otherwise, fall back to Python's internal graph logic
         dsep_equations = graph.generate_dsep_equations(latent=latent)
-        
-        # Filter if incremental caching is used from R (old string-based format)
         if dsep_equations_to_run is not None:
             norm_to_run = [" ".join(e.split()) for e in dsep_equations_to_run]
             dsep_equations = [c for c in dsep_equations if " ".join(c["equation_string"].split()) in norm_to_run]
@@ -321,15 +533,13 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
         if not quiet:
             print("Graph is fully connected or no testable claims exist. No implied conditional independencies to test.")
         return results
-        
+
     if not quiet:
         msg = f"\nRunning M-Separation tests (MAG)" if latent else f"\nRunning D-Separation tests"
         print(f"{msg} ({len(dsep_equations)} implied claims)...")
-        
+
     dsep_results = []
-    
-    # Optional subsampling for d-sep speed
-    # We use data.values() iter to find length, but we must ignore latents (not in data)
+
     N_total = len(next(iter(data.values())))
     dsep_data = data
     if N_total > dsep_max_obs:
@@ -337,75 +547,82 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
             print(f"Subsampling data to {dsep_max_obs} rows for fast testing.")
         idx = np.random.choice(N_total, size=dsep_max_obs, replace=False)
         dsep_data = {k: v[idx] for k, v in data.items()}
-        
+
     jax_dsep_data = {}
     for k, v in dsep_data.items():
         if isinstance(v, dict):
             jax_dsep_data[k] = {vk: jnp.array(vv) for vk, vv in v.items()}
         else:
             jax_dsep_data[k] = jnp.array(v)
-    
+
     for i, claim in enumerate(dsep_equations):
         eq_str = claim["equation_string"]
         test_var = claim["test_node"]
         resp = claim["response"]
         claim_type = claim["type"]
-        
+
         if not quiet:
             test_desc = "(Induced Correlation)" if claim_type == "correlation" else "(Conditional Independence)"
             print(f"\n[Test {i+1} / {len(dsep_equations)}]  {eq_str}  {test_desc}")
-            
+
         compile_eq_str = claim.get("compile_equation_string", eq_str)
-            
+
         test_parser = FormulaParser([compile_eq_str])
         test_parsed = test_parser.parse()
         test_det_terms = {**(deterministic_terms or {}), **(test_parser.deterministic_terms or {})}
         test_graph = CausalGraph(test_parsed, deterministic_terms=test_det_terms)
         test_graph.build()
-        
-        test_compiler = NumPyroBuilder(test_graph, family_dict=family, deterministic_terms=test_det_terms, cor_matrices=cor_matrices, fix_latent=fix_latent, prior_scale_fixed=prior_scale_fixed, levels=levels)
 
+        test_compiler = NumPyroBuilder(test_graph, family_dict=family, deterministic_terms=test_det_terms, cor_matrices=cor_matrices, fix_latent=fix_latent, prior_scale_fixed=prior_scale_fixed, levels=levels)
         test_model_func = test_compiler.generate_model_function(data_for_compilation=dsep_data)
-        
-        rng_key, subkey = jax.random.split(rng_key)
-        
-        # We run MCMC for the dsep test using the same parameters as the main model
-        # To get valid Rhat, we enforce at least 2 chains if the user requested less than 2
-        dsep_chains = max(2, num_chains)
-        kernel_base = NUTS(test_model_func, target_accept_prob=adapt_delta, max_tree_depth=max_treedepth, init_strategy=numpyro.infer.init_to_median())
-        if cor_matrices and any(isinstance(v, dict) and v.get("type") == "multiPhylo" for v in cor_matrices.values()):
-            n_trees = int(jax_dsep_data.get("Ntree", 10))
-            kernel_base = DiscreteHMCGibbs(kernel_base)
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message=".*There are not enough devices.*")
-            test_mcmc = MCMC(kernel_base, num_warmup=num_warmup, num_samples=num_samples, num_chains=dsep_chains, thinning=thinning, progress_bar=False)
-            test_mcmc.run(subkey, **jax_dsep_data)
-        
-        # We need grouped samples for Rhat and neff calculations
-        samples_grouped = test_mcmc.get_samples(group_by_chain=True)
-        # We also want flat samples for easy percentiles
+
+        if has_multiPhylo_ensemble:
+            n_trees = int(ensemble_structs[0].get("n_trees", jax_dsep_data.get("Ntree", 10)))
+            ens_n_chains = max(2, int(ensemble_structs[0].get("n_chains", ensemble_structs[0].get("chains_per_tree", 2))))
+            test_ens_func = _wrap_ensemble_model(test_model_func, cor_matrices, jax_dsep_data)
+            rng_key, test_mcmc, test_tree_samples, samples_grouped = _run_ensemble_chains(
+                rng_key, test_ens_func, jax_dsep_data, n_trees, ens_n_chains, n_cores, show_progress=False
+            )
+        else:
+            rng_key, subkey = jax.random.split(rng_key)
+            dsep_chains = max(2, num_chains)
+            kernel_base = NUTS(test_model_func, target_accept_prob=adapt_delta, max_tree_depth=max_treedepth, init_strategy=numpyro.infer.init_to_median())
+            if cor_matrices and any(isinstance(v, dict) and v.get("type") == "multiPhylo" for v in cor_matrices.values()):
+                n_trees = int(jax_dsep_data.get("Ntree", 10))
+                kernel_base = DiscreteHMCGibbs(kernel_base)
+            c_method = "parallel" if (int(n_cores) > 1 and int(dsep_chains) > 1) else "sequential"
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message=".*There are not enough devices.*")
+                test_mcmc = MCMC(kernel_base, num_warmup=num_warmup, num_samples=num_samples, num_chains=dsep_chains, thinning=thinning, chain_method=c_method, progress_bar=False)
+                test_mcmc.run(subkey, **jax_dsep_data)
+            samples_grouped = test_mcmc.get_samples(group_by_chain=True)
+
         samples_flat = {k: np.asarray(v).flatten() for k, v in samples_grouped.items()}
-        
+
         beta_name = f"beta_{resp}_{test_var}"
-        
+
         if beta_name in samples_flat:
             posteriors = samples_flat[beta_name]
             mean_val = float(np.mean(posteriors))
-            # 95% HPDI (using percentile for simplicity in this base implementation)
             ci_lower = float(np.percentile(posteriors, 2.5))
             ci_upper = float(np.percentile(posteriors, 97.5))
-            
-            # Compute Rhat and neff
+
             chain_samples = np.asarray(samples_grouped[beta_name])
-            rhat = float(diag.gelman_rubin(chain_samples))
+            if has_multiPhylo_ensemble and len(test_tree_samples) > 0 and test_tree_samples[0][beta_name].shape[0] >= 2:
+                # Within-tree Rhat for MCMC convergence
+                rhat = float(np.max([diag.gelman_rubin(ts[beta_name]) for ts in test_tree_samples]))
+                rhat_tree = float(diag.gelman_rubin(chain_samples))
+            else:
+                rhat = float(diag.gelman_rubin(chain_samples))
+                rhat_tree = None
             n_eff = float(diag.effective_sample_size(chain_samples))
-            
-            # If the 95% CI includes 0, it is conditionally independent
+
             is_independent = (ci_lower < 0 < ci_upper)
-            
+
             if not quiet:
-                print(f" -> {beta_name} = {mean_val:.3f} [{ci_lower:.3f}, {ci_upper:.3f}]")
-                
+                rhat_tree_msg = f"  Rhat_tree={rhat_tree:.3f}" if rhat_tree is not None else ""
+                print(f" -> {beta_name} = {mean_val:.3f} [{ci_lower:.3f}, {ci_upper:.3f}] (Rhat={rhat:.3f}{rhat_tree_msg})")
+
             dsep_results.append({
                 "claim": f"{resp} _|_ {test_var} | {', '.join(claim['conditioning_set'])}",
                 "equation": eq_str,
@@ -415,28 +632,95 @@ def fit(equations, data, family=None, latent=None, cor_matrices=None, induced_co
                 "ci_97.5": ci_upper,
                 "is_independent": is_independent,
                 "rhat": rhat,
+                "rhat_tree": rhat_tree,
                 "n_eff": n_eff,
                 "samples": np.asarray(posteriors).tolist()
             })
-            
+
     results["dsep_results"] = dsep_results
     return results
 
+
+def _accumulate_waic_from_log_lik(log_lik_dict):
+    import numpy as np
+    from scipy.special import logsumexp
+
+    if not log_lik_dict:
+        return None
+
+    total_elpd_waic = 0.0
+    total_p_waic    = 0.0
+    total_waic      = 0.0
+    total_n_obs     = 0
+    se_sq_elpd      = 0.0
+    se_sq_p         = 0.0
+    se_sq_waic      = 0.0
+    all_elpd_i      = []
+    all_p_waic_i    = []
+    all_waic_i      = []
+
+    n_samples = None
+    for k, ll in log_lik_dict.items():
+        ll_np = np.array(ll)          # shape: (n_samples, n_obs_k)
+        n_samples, n_obs_k = ll_np.shape
+
+        lpd_i      = logsumexp(ll_np, axis=0) - np.log(n_samples)
+        p_waic_i   = np.var(ll_np, axis=0, ddof=1)
+        elpd_i     = lpd_i - p_waic_i
+        waic_i     = -2.0 * elpd_i
+
+        all_elpd_i.append(elpd_i)
+        all_p_waic_i.append(p_waic_i)
+        all_waic_i.append(waic_i)
+
+        total_elpd_waic += float(np.sum(elpd_i))
+        total_p_waic    += float(np.sum(p_waic_i))
+        total_waic      += float(np.sum(waic_i))
+
+        se_sq_elpd  += n_obs_k * float(np.var(elpd_i,   ddof=1))
+        se_sq_p     += n_obs_k * float(np.var(p_waic_i, ddof=1))
+        se_sq_waic  += n_obs_k * float(np.var(waic_i,   ddof=1))
+        total_n_obs += n_obs_k
+
+    return {
+        "elpd_waic": {"Estimate": total_elpd_waic, "SE": float(np.sqrt(se_sq_elpd))},
+        "p_waic":    {"Estimate": total_p_waic,    "SE": float(np.sqrt(se_sq_p))},
+        "waic":      {"Estimate": total_waic,      "SE": float(np.sqrt(se_sq_waic))},
+        "pointwise": {
+            "elpd_waic_i": np.concatenate(all_elpd_i).tolist(),
+            "p_waic_i":    np.concatenate(all_p_waic_i).tolist(),
+            "waic_i":      np.concatenate(all_waic_i).tolist(),
+        },
+        "n_obs":     total_n_obs,
+        "n_samples": n_samples,
+    }
+
+
+def _calculate_waic_ensemble(ens_model_func, tree_samples_list, jax_data):
+    from numpyro.infer import log_likelihood
+    import numpy as np
+    import jax.numpy as jnp
+
+    ll_per_tree = []
+    for k, ts in enumerate(tree_samples_list):
+        flat_k = {
+            param: jnp.array(val.reshape(-1, *val.shape[2:]))
+            for param, val in ts.items()
+        }
+        ll_k = log_likelihood(ens_model_func, flat_k, _tree_idx=jnp.int32(k), **jax_data)
+        ll_per_tree.append({var: np.asarray(v) for var, v in ll_k.items()})
+
+    if not ll_per_tree or not ll_per_tree[0]:
+        return None
+
+    log_lik_dict = {
+        var_name: np.concatenate([ll_per_tree[k][var_name] for k in range(len(tree_samples_list))], axis=0)
+        for var_name in ll_per_tree[0].keys()
+    }
+    return _accumulate_waic_from_log_lik(log_lik_dict)
+
+
 def _calculate_waic_internal(model_func, mcmc, jax_data):
-    """
-    Calculates WAIC (Widely Applicable Information Criterion) with standard errors
-    using pointwise log-likelihoods.
-
-    Handles multi-scale hierarchical models where different response variables
-    may have different numbers of observations (e.g. Abundance N=4500, Body_Mass_s N=50).
-    Each variable's pointwise log-likelihoods are kept separate and only combined
-    at the total-WAIC level, so shapes never need to broadcast.
-
-    For multiPhylo models, uses Rao-Blackwellization: for each MCMC sample of
-    continuous parameters, the log-likelihood is averaged over ALL trees (with
-    equal weight = 1/T). This removes the artificial variance in p_waic that would
-    result from K_tree jumping between trees across samples.
-    """
     from numpyro.infer import log_likelihood
     import numpy as np
     from scipy.special import logsumexp
@@ -444,22 +728,14 @@ def _calculate_waic_internal(model_func, mcmc, jax_data):
 
     flat_samples = mcmc.get_samples()
 
-    # Detect multiPhylo: K_tree variables present in samples
     k_tree_keys = [k for k in flat_samples.keys() if k.startswith("K_tree")]
     has_multi_phylo = len(k_tree_keys) > 0
 
     if has_multi_phylo:
-        # Determine number of trees from jax_data
         n_trees = int(jax_data.get("Ntree", max(int(v.max()) + 1
                                                  for v in (np.array(flat_samples[k])
                                                            for k in k_tree_keys))))
-
-        # Rao-Blackwellized WAIC:
-        # For each continuous parameter sample s, compute:
-        #   LL_RB[i, s] = log(1/T * sum_k exp(log p(y_i | theta_s, z_s, K=k)))
-        # This marginalizes the discrete tree index with uniform weights,
-        # removing the artificial variance from K_tree jumping across samples.
-        ll_per_tree = []  # list of dicts: {var: array(n_samples, n_obs)}
+        ll_per_tree = []
         for k in range(n_trees):
             fixed_samples = {
                 key: (jnp.full_like(val, k) if key in k_tree_keys else val)
@@ -468,61 +744,14 @@ def _calculate_waic_internal(model_func, mcmc, jax_data):
             ll_k = log_likelihood(model_func, fixed_samples, **jax_data)
             ll_per_tree.append({var: np.array(v) for var, v in ll_k.items()})
 
-        # Stack and marginalize: log_mean_exp over trees (axis=0)
         log_lik_dict = {}
         for var_name in ll_per_tree[0].keys():
-            # shape: (n_trees, n_samples, n_obs)
             ll_stack = np.stack([ll_per_tree[k][var_name] for k in range(n_trees)], axis=0)
-            # Marginalize: log(1/T * sum_k exp(ll)): shape (n_samples, n_obs)
             log_lik_dict[var_name] = logsumexp(ll_stack, axis=0) - np.log(n_trees)
     else:
-        # Standard (non-multiPhylo) WAIC: use all samples directly
         log_lik_dict = log_likelihood(model_func, flat_samples, **jax_data)
 
-    if not log_lik_dict:
-        return None
-
-    # Accumulate pointwise WAIC components per variable, then sum across variables.
-    # Each ll has shape (n_samples, n_obs_for_this_variable).
-    # We keep them separate to avoid shape-mismatch in multi-scale models.
-    total_elpd_waic = 0.0
-    total_p_waic    = 0.0
-    total_waic      = 0.0
-    total_n_obs     = 0
-    se_sq_elpd      = 0.0
-    se_sq_p         = 0.0
-    se_sq_waic      = 0.0
-
-    n_samples = None
-    for k, ll in log_lik_dict.items():
-        ll_np = np.array(ll)          # shape: (n_samples, n_obs_k)
-        n_samples, n_obs_k = ll_np.shape
-
-        # lpd per observation
-        lpd_i      = logsumexp(ll_np, axis=0) - np.log(n_samples)
-        # effective params per observation
-        p_waic_i   = np.var(ll_np, axis=0, ddof=1)
-        # elpd and waic per observation
-        elpd_i     = lpd_i - p_waic_i
-        waic_i     = -2.0 * elpd_i
-
-        total_elpd_waic += float(np.sum(elpd_i))
-        total_p_waic    += float(np.sum(p_waic_i))
-        total_waic      += float(np.sum(waic_i))
-
-        # SE contributions (each variable contributes independently)
-        se_sq_elpd  += n_obs_k * float(np.var(elpd_i,   ddof=1))
-        se_sq_p     += n_obs_k * float(np.var(p_waic_i, ddof=1))
-        se_sq_waic  += n_obs_k * float(np.var(waic_i,   ddof=1))
-        total_n_obs += n_obs_k
-
-    return {
-        "elpd_waic": {"Estimate": total_elpd_waic,       "SE": float(np.sqrt(se_sq_elpd))},
-        "p_waic":    {"Estimate": total_p_waic,           "SE": float(np.sqrt(se_sq_p))},
-        "waic":      {"Estimate": total_waic,             "SE": float(np.sqrt(se_sq_waic))},
-        "n_obs":     total_n_obs,
-        "n_samples": n_samples,
-    }
+    return _accumulate_waic_from_log_lik(log_lik_dict)
 
 
 def summary(result, digits=3):
@@ -636,8 +865,9 @@ def dsep_summary(result, digits=3, verbose=False):
         )
 
     rows = []
+    has_rhat_tree = any(t.get("rhat_tree") is not None for t in tests)
     for t in tests:
-        rows.append({
+        row = {
             "claim":       t["claim"],
             "coefficient": t["coefficient"],
             "mean":        round(t["mean"],    digits),
@@ -645,8 +875,11 @@ def dsep_summary(result, digits=3, verbose=False):
             "97.5%":       round(t["ci_97.5"], digits),
             "result":      "PASS" if t["is_independent"] else "FAIL",
             "Rhat":        round(t["rhat"],    digits),
-            "n_eff":       round(t["n_eff"],   1),
-        })
+        }
+        if has_rhat_tree:
+            row["Rhat_tree"] = round(t["rhat_tree"], digits) if t.get("rhat_tree") is not None else None
+        row["n_eff"] = round(t["n_eff"],   1)
+        rows.append(row)
 
     df = pd.DataFrame(rows).set_index("claim")
 
