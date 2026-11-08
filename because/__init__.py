@@ -2,7 +2,7 @@
 because-py: A Python backend for the because multiscale causal engine.
 """
 
-__version__ = "0.2.11"
+__version__ = "0.3.0"
 
 from .api import fit, get_dsep_equations, summary, dsep_summary
 
