@@ -1,4 +1,5 @@
 ---
+pagetitle: "Changelog"
 toc: true
 toc-depth: 3
 ---

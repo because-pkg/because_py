@@ -14,202 +14,6 @@
     "text": "api.fit\napi.fit(equations, data, family=None, latent=None, cor_matrices=None, dsep=False, dsep_only=False, calculate_waic=False, num_samples=1000, num_warmup=500, num_chains=1, thinning=1, n_cores=1, seed=0, dsep_max_obs=2000, quiet=False, dsep_equations_to_run=None, adapt_delta=0.95, fix_latent='loading')\nHigh-level API for because-py. Fits a causal hierarchical model using NumPyro.\n:param equations: List of formula strings (e.g., [“y ~ x + z + (1|group)”]). :param data: Dictionary of numpy arrays for the data. :param family: Dictionary specifying families (e.g. {“y”: “poisson”}). Default is “gaussian”. :param latent: List of unmeasured/latent variables (e.g. [“L1”]). If None, auto-detected from equations. :param dsep: Boolean, if True, computes and tests the basis set of implied conditional independencies. :param num_samples: Number of post-warmup MCMC samples. :param num_warmup: Number of warmup MCMC samples. :param num_chains: Number of parallel MCMC chains. :param thinning: Thinning interval for MCMC samples. :param seed: Random seed for JAX PRNGKey. :param dsep_max_obs: Maximum number of observations to use for d-sep tests (random subsampling) for speed. :param quiet: Boolean, if True, suppresses MCMC progress bars.\n:return: A dictionary containing the fitted MCMC object and optional dsep results."
   },
   {
-    "objectID": "index.html",
-    "href": "index.html",
-    "title": "because-py",
-    "section": "",
-    "text": "because-py is the Python inference engine behind the R because package. It translates structural equation models (SEMs) specified as R-style formulas into fully probabilistic NumPyro models and samples them with HMC/NUTS.\nYou can use because-py in two ways:"
-  },
-  {
-    "objectID": "index.html#installation",
-    "href": "index.html#installation",
-    "title": "because-py",
-    "section": "Installation",
-    "text": "Installation\nSee the Installation & Setup article for full instructions including JAX/GPU configuration.\npip install because_py"
-  },
-  {
-    "objectID": "index.html#how-it-works",
-    "href": "index.html#how-it-works",
-    "title": "because-py",
-    "section": "How it works",
-    "text": "How it works\nbecause-py parses SEM formulas into a directed acyclic graph (DAG), topologically sorts the nodes, and generates a NumPyro model closure on the fly. The model is then sampled with NUTS (No-U-Turn Sampler) via JAX — supporting CPU, GPU, and TPU backends.\nFor a full description of the statistical framework, see the because package documentation."
-  },
-  {
-    "objectID": "articles/installation.html",
-    "href": "articles/installation.html",
-    "title": "Installation & Setup",
-    "section": "",
-    "text": "because-py is the Python NumPyro backend for the R because package. It can be used from R (the recommended approach) or directly in Python."
-  },
-  {
-    "objectID": "articles/installation.html#installing-because-py",
-    "href": "articles/installation.html#installing-because-py",
-    "title": "Installation & Setup",
-    "section": "",
-    "text": "because-py is the Python NumPyro backend for the R because package. It can be used from R (the recommended approach) or directly in Python."
-  },
-  {
-    "objectID": "articles/installation.html#from-r-recommended",
-    "href": "articles/installation.html#from-r-recommended",
-    "title": "Installation & Setup",
-    "section": "From R (recommended)",
-    "text": "From R (recommended)\n\nStep 1 — Install the because R package\n# Stable release\nremotes::install_github(\"because-pkg/because@v1.3.0\", build_vignettes = TRUE)\n\n# Latest development version\nremotes::install_github(\"because-pkg/because\", build_vignettes = TRUE)\n\n\nStep 2 — Install reticulate\ninstall.packages(\"reticulate\")\n\n\nStep 3 — Install Python (if needed)\nIf you do not already have Python on your system, reticulate can install Miniconda for you (skip this if Python is already installed):\nreticulate::install_miniconda()\n\n\nStep 4 — One-step setup\nbecause provides a built-in helper that installs all required Python packages (numpyro, jax, jaxlib, networkx, funsor, and because_py) into your active Python environment:\ninstall_because_numpyro()\nThe function automatically detects your active Python environment — including RStudio project-level virtual environments (.venv) and any existing reticulate configuration — falling back to \"r-reticulate\" if none is found.\n\n\nTroubleshooting: wrong Python environment\nIf in a fresh R session reticulate picks up a different Python environment than the one where the packages were installed, because will throw:\nError: Failed to import python module 'because.api'.\nPython is currently running from: /path/to/wrong/python\nEnsure because_py is installed in this exact environment.\nTry running: install_because_numpyro()\nIn this case, point reticulate to the correct environment before calling because():\nreticulate::use_virtualenv(\"r-reticulate\", required = TRUE)"
-  },
-  {
-    "objectID": "articles/installation.html#directly-in-python",
-    "href": "articles/installation.html#directly-in-python",
-    "title": "Installation & Setup",
-    "section": "Directly in Python",
-    "text": "Directly in Python\npip install because_py\nOr from source:\ngit clone https://github.com/because-pkg/because_py.git\ncd because_py\npip install -e ."
-  },
-  {
-    "objectID": "articles/reticulate_usage.html",
-    "href": "articles/reticulate_usage.html",
-    "title": "Using because-py via R (reticulate)",
-    "section": "",
-    "text": "The because R package calls because-py transparently whenever you specify engine = \"numpyro\". You do not need to write any Python code — reticulate handles the bridge. The workflow is identical to a JAGS run: same formula syntax, same summary() and plot_dag() methods."
-  },
-  {
-    "objectID": "articles/reticulate_usage.html#overview",
-    "href": "articles/reticulate_usage.html#overview",
-    "title": "Using because-py via R (reticulate)",
-    "section": "",
-    "text": "The because R package calls because-py transparently whenever you specify engine = \"numpyro\". You do not need to write any Python code — reticulate handles the bridge. The workflow is identical to a JAGS run: same formula syntax, same summary() and plot_dag() methods."
-  },
-  {
-    "objectID": "articles/reticulate_usage.html#a-simple-causal-model",
-    "href": "articles/reticulate_usage.html#a-simple-causal-model",
-    "title": "Using because-py via R (reticulate)",
-    "section": "A simple causal model",
-    "text": "A simple causal model\n\nlibrary(because)\nlibrary(because.phybase)\n\n# Bird life-history data (678 species)\ndata(birds)\n\nfit &lt;- because(\n  equations = list(\n    Brain    ~ Mass + Migration,\n    Lifespan ~ Brain,\n    Clutch   ~ Brain + Mass + Migration\n  ),\n  data   = birds,\n  engine = \"numpyro\",\n  n.iter = 2000,\n  n.burnin = 500\n)\n\nsummary(fit)"
-  },
-  {
-    "objectID": "articles/reticulate_usage.html#d-separation-testing-first",
-    "href": "articles/reticulate_usage.html#d-separation-testing-first",
-    "title": "Using because-py via R (reticulate)",
-    "section": "D-separation testing first",
-    "text": "D-separation testing first\nFollowing best practice, always test d-separation before comparing models by WAIC. Only models that pass all d-sep tests are structurally valid.\n\n# Run d-sep tests without fitting the full model (fast)\nfit_dsep &lt;- because(\n  equations = list(\n    Brain    ~ Mass + Migration,\n    Lifespan ~ Brain,\n    Clutch   ~ Brain + Mass + Migration\n  ),\n  data   = birds,\n  engine = \"numpyro\",\n  dsep   = TRUE,\n  dsep_only = TRUE\n)\n\nfit_dsep$dsep"
-  },
-  {
-    "objectID": "articles/reticulate_usage.html#inspecting-the-generated-numpyro-model-code",
-    "href": "articles/reticulate_usage.html#inspecting-the-generated-numpyro-model-code",
-    "title": "Using because-py via R (reticulate)",
-    "section": "Inspecting the generated NumPyro model code",
-    "text": "Inspecting the generated NumPyro model code\nA unique feature of because-py is that the generated NumPyro model is stored as an executable Python string, which you can inspect and modify:\n\ncat(fit$numpyro_code)\n\nThis is useful for:\n\nVerification — confirming the model matches your theoretical expectations\nCustomisation — copying the code to a .py script and adding custom priors or likelihoods\nTeaching — showing students the connection between DAG specification and probabilistic code"
-  },
-  {
-    "objectID": "articles/reticulate_usage.html#comparing-models",
-    "href": "articles/reticulate_usage.html#comparing-models",
-    "title": "Using because-py via R (reticulate)",
-    "section": "Comparing models",
-    "text": "Comparing models\nOnce d-sep is confirmed, use WAIC to compare models with the same response variable:\n\nfit_null &lt;- because(\n  equations = list(Brain ~ Mass),\n  data      = birds,\n  engine    = \"numpyro\",\n  n.iter    = 2000\n)\n\nbecause_compare(fit, fit_null)\n\n\n\n\n\n\n\nImportant\n\n\n\nWAIC comparisons are only valid between models that share the same response variable(s) and the same observations. Cross-model comparisons with different endogenous variables will produce inflated WAIC values."
-  },
-  {
-    "objectID": "articles/reticulate_usage.html#extending-chains-with-because_continue",
-    "href": "articles/reticulate_usage.html#extending-chains-with-because_continue",
-    "title": "Using because-py via R (reticulate)",
-    "section": "Extending chains with because_continue()",
-    "text": "Extending chains with because_continue()\nNumPyro’s HMC/NUTS converges so efficiently that because_continue() is rarely needed. If you do need more samples, simply re-run with a larger n.iter:\n\nfit2 &lt;- because(\n  equations = list(\n    Brain    ~ Mass + Migration,\n    Lifespan ~ Brain,\n    Clutch   ~ Brain + Mass + Migration\n  ),\n  data     = birds,\n  engine   = \"numpyro\",\n  n.iter   = 5000,   # increase from 2000\n  n.burnin = 500\n)"
-  },
-  {
-    "objectID": "articles/reticulate_usage.html#visualising-the-dag",
-    "href": "articles/reticulate_usage.html#visualising-the-dag",
-    "title": "Using because-py via R (reticulate)",
-    "section": "Visualising the DAG",
-    "text": "Visualising the DAG\nAll plot methods work identically regardless of engine:\n\nplot_dag(fit)"
-  },
-  {
-    "objectID": "articles/reticulate_usage.html#traceplots-and-diagnostics",
-    "href": "articles/reticulate_usage.html#traceplots-and-diagnostics",
-    "title": "Using because-py via R (reticulate)",
-    "section": "Traceplots and diagnostics",
-    "text": "Traceplots and diagnostics\n\n# Using coda\nplot(fit$samples)\n\n# Or with bayesplot\nlibrary(bayesplot)\nmcmc_trace(fit$samples, pars = c(\"beta_Brain_Mass\", \"beta_Brain_Migration\"))\nmcmc_areas(fit$samples, pars = c(\"beta_Brain_Mass\", \"beta_Brain_Migration\"))"
-  },
-  {
-    "objectID": "articles/python_usage.html",
-    "href": "articles/python_usage.html",
-    "title": "Using because-py directly in Python",
-    "section": "",
-    "text": "because-py exposes a fit() function that accepts formula strings and NumPy arrays. This is useful when you want to integrate causal modelling into a Python pipeline (e.g., alongside pandas, scikit-learn, or ArviZ)."
-  },
-  {
-    "objectID": "articles/python_usage.html#overview",
-    "href": "articles/python_usage.html#overview",
-    "title": "Using because-py directly in Python",
-    "section": "",
-    "text": "because-py exposes a fit() function that accepts formula strings and NumPy arrays. This is useful when you want to integrate causal modelling into a Python pipeline (e.g., alongside pandas, scikit-learn, or ArviZ)."
-  },
-  {
-    "objectID": "articles/python_usage.html#basic-usage",
-    "href": "articles/python_usage.html#basic-usage",
-    "title": "Using because-py directly in Python",
-    "section": "Basic usage",
-    "text": "Basic usage\nimport because\nimport numpy as np\n\n# Simulate some data\nrng = np.random.default_rng(42)\nn   = 200\nx   = rng.normal(size=n)\ny   = 0.7 * x + rng.normal(size=n)\n\nresult = because.fit(\n    equations   = [\"y ~ x\"],\n    data        = {\"x\": x, \"y\": y},\n    num_samples = 1000,\n    num_warmup  = 500,\n    num_chains  = 4\n)\n\n# Posterior summary\nimport arviz as az\nidata = az.from_numpyro(result[\"mcmc\"])\nprint(az.summary(idata, var_names=[\"beta_y_x\", \"alpha_y\"]))"
-  },
-  {
-    "objectID": "articles/python_usage.html#specifying-families",
-    "href": "articles/python_usage.html#specifying-families",
-    "title": "Using because-py directly in Python",
-    "section": "Specifying families",
-    "text": "Specifying families\nPass a family dictionary to use non-Gaussian likelihoods:\nresult = because.fit(\n    equations   = [\"y ~ x + z\"],\n    data        = {\"x\": x, \"z\": z, \"y\": y_counts},\n    family      = {\"y\": \"poisson\"},\n    num_samples = 2000\n)\nSupported families: \"gaussian\", \"poisson\", \"binomial\", \"negbinomial\", \"ordinal\"."
-  },
-  {
-    "objectID": "articles/python_usage.html#d-separation-testing",
-    "href": "articles/python_usage.html#d-separation-testing",
-    "title": "Using because-py directly in Python",
-    "section": "D-separation testing",
-    "text": "D-separation testing\ndsep_result = because.fit(\n    equations = [\"Brain ~ Mass + Migration\",\n                 \"Lifespan ~ Brain\",\n                 \"Clutch  ~ Brain + Mass + Migration\"],\n    data      = data_dict,\n    dsep      = True,\n    dsep_only = True   # skip MCMC, only run d-sep tests\n)\n\nfor test in dsep_result[\"dsep\"]:\n    print(test)"
-  },
-  {
-    "objectID": "articles/python_usage.html#accessing-the-generated-model-code",
-    "href": "articles/python_usage.html#accessing-the-generated-model-code",
-    "title": "Using because-py directly in Python",
-    "section": "Accessing the generated model code",
-    "text": "Accessing the generated model code\nresult = because.fit(\n    equations   = [\"y ~ x\"],\n    data        = {\"x\": x, \"y\": y},\n    num_samples = 1000\n)\n\n# Print the auto-generated NumPyro model\nprint(result[\"model_code\"])"
-  },
-  {
-    "objectID": "articles/python_usage.html#using-arviz-for-diagnostics",
-    "href": "articles/python_usage.html#using-arviz-for-diagnostics",
-    "title": "Using because-py directly in Python",
-    "section": "Using ArviZ for diagnostics",
-    "text": "Using ArviZ for diagnostics\nimport arviz as az\n\nidata = az.from_numpyro(result[\"mcmc\"])\n\n# Trace plots\naz.plot_trace(idata)\n\n# R-hat and ESS\nprint(az.summary(idata))\n\n# WAIC\nprint(az.waic(idata))"
-  },
-  {
-    "objectID": "reference/builder.compiler.NumPyroBuilder.html",
-    "href": "reference/builder.compiler.NumPyroBuilder.html",
-    "title": "builder.compiler.NumPyroBuilder",
-    "section": "",
-    "text": "builder.compiler.NumPyroBuilder(self, causal_graph, family_dict=None, deterministic_terms=None, cor_matrices=None, fix_latent='loading')\nTakes a parsed causal graph and generates the dynamic NumPyro model via a closure.\n\n\n\n\n\nName\nDescription\n\n\n\n\ngenerate_model_code_string\nReturns a self-contained, executable Python source string that\n\n\ngenerate_model_function\nReturns a callable python function representing the NumPyro model.\n\n\n\n\n\nbuilder.compiler.NumPyroBuilder.generate_model_code_string(data_shapes=None)\nReturns a self-contained, executable Python source string that represents the NumPyro model built by generate_model_function().\nThe output is intended for inspection, auditing, or copy-paste modification in a standalone Python script. Covariance / Cholesky matrices are referenced as arguments so the function signature matches what because-py passes internally.\n:param data_shapes: Optional dict mapping variable names to their shapes (e.g. {“Brain”: (678,), “phy”: (678, 678)}). Used to annotate the function signature with dimension comments. :return: str — a Python source string.\n\n\n\nbuilder.compiler.NumPyroBuilder.generate_model_function(data_for_compilation=None, force_plate_obs=False)\nReturns a callable python function representing the NumPyro model. :param data_for_compilation: Optional dict of the data to statically optimize the JAX trace (e.g. for NaN masking). :param force_plate_obs: If True, forces the use of numpyro.plate for observations even if multiPhylo is detected. Used for WAIC calculation."
-  },
-  {
-    "objectID": "reference/builder.compiler.NumPyroBuilder.html#methods",
-    "href": "reference/builder.compiler.NumPyroBuilder.html#methods",
-    "title": "builder.compiler.NumPyroBuilder",
-    "section": "",
-    "text": "Name\nDescription\n\n\n\n\ngenerate_model_code_string\nReturns a self-contained, executable Python source string that\n\n\ngenerate_model_function\nReturns a callable python function representing the NumPyro model.\n\n\n\n\n\nbuilder.compiler.NumPyroBuilder.generate_model_code_string(data_shapes=None)\nReturns a self-contained, executable Python source string that represents the NumPyro model built by generate_model_function().\nThe output is intended for inspection, auditing, or copy-paste modification in a standalone Python script. Covariance / Cholesky matrices are referenced as arguments so the function signature matches what because-py passes internally.\n:param data_shapes: Optional dict mapping variable names to their shapes (e.g. {“Brain”: (678,), “phy”: (678, 678)}). Used to annotate the function signature with dimension comments. :return: str — a Python source string.\n\n\n\nbuilder.compiler.NumPyroBuilder.generate_model_function(data_for_compilation=None, force_plate_obs=False)\nReturns a callable python function representing the NumPyro model. :param data_for_compilation: Optional dict of the data to statically optimize the JAX trace (e.g. for NaN masking). :param force_plate_obs: If True, forces the use of numpyro.plate for observations even if multiPhylo is detected. Used for WAIC calculation."
-  },
-  {
-    "objectID": "reference/index.html",
-    "href": "reference/index.html",
-    "title": "API Reference",
-    "section": "",
-    "text": "Main entry point for fitting causal models with NumPyro.\n\n\n\napi.fit\nHigh-level API for because-py. Fits a causal hierarchical model using NumPyro.\n\n\napi.get_dsep_equations\nHelper to return implied d-sep claims without fitting the model.\n\n\n\n\n\n\nLower-level classes for building and inspecting NumPyro models.\n\n\n\nbuilder.compiler.NumPyroBuilder\nTakes a parsed causal graph and generates the dynamic NumPyro model via a closure."
-  },
-  {
-    "objectID": "reference/index.html#high-level-api",
-    "href": "reference/index.html#high-level-api",
-    "title": "API Reference",
-    "section": "",
-    "text": "Main entry point for fitting causal models with NumPyro.\n\n\n\napi.fit\nHigh-level API for because-py. Fits a causal hierarchical model using NumPyro.\n\n\napi.get_dsep_equations\nHelper to return implied d-sep claims without fitting the model."
-  },
-  {
-    "objectID": "reference/index.html#model-builder",
-    "href": "reference/index.html#model-builder",
-    "title": "API Reference",
-    "section": "",
-    "text": "Lower-level classes for building and inspecting NumPyro models.\n\n\n\nbuilder.compiler.NumPyroBuilder\nTakes a parsed causal graph and generates the dynamic NumPyro model via a closure."
-  },
-  {
     "objectID": "changelog.html",
     "href": "changelog.html",
     "title": "Changelog",
@@ -264,5 +68,173 @@
     "title": "Changelog",
     "section": "",
     "text": "Formula-driven SEM compilation to NumPyro models.\nTopological DAG sorting and minimal d-separation basis set generation.\nNUTS sampling via JAX.\nSupport for Gaussian, Poisson, Binomial, and Negative Binomial likelihoods.\nRandom intercepts and spatial/phylogenetic covariance matrix support via Cholesky decomposition."
+  },
+  {
+    "objectID": "articles/python_usage.html",
+    "href": "articles/python_usage.html",
+    "title": "Using because-py directly in Python",
+    "section": "",
+    "text": "because-py exposes a fit() function that accepts formula strings and NumPy arrays. This is useful when you want to integrate causal modelling into a Python pipeline (e.g., alongside pandas, scikit-learn, or ArviZ)."
+  },
+  {
+    "objectID": "articles/python_usage.html#overview",
+    "href": "articles/python_usage.html#overview",
+    "title": "Using because-py directly in Python",
+    "section": "",
+    "text": "because-py exposes a fit() function that accepts formula strings and NumPy arrays. This is useful when you want to integrate causal modelling into a Python pipeline (e.g., alongside pandas, scikit-learn, or ArviZ)."
+  },
+  {
+    "objectID": "articles/python_usage.html#basic-usage",
+    "href": "articles/python_usage.html#basic-usage",
+    "title": "Using because-py directly in Python",
+    "section": "Basic usage",
+    "text": "Basic usage\nimport because\nimport numpy as np\n\n# Simulate some data\nimport because\nimport numpy as np\nrng = np.random.default_rng(42)\nn   = 1000\nx   = rng.normal(size=n)\nk   = 0.5 * y + rng.normal(size=n)\ny   = 0.7 * x + rng.normal(size=n)\n\nresult = because.fit(\n    equations   = [\"y ~ x\",\"k ~ y\"],\n    data        = {\"x\": x, \"y\": y,\"k\":k},\n    num_samples = 2000,\n    num_warmup  = 1000,\n    num_chains  = 3       \n)\n\n# Posterior summary\nimport arviz as az\nidata = az.from_numpyro(result[\"mcmc\"])\nprint(az.summary(idata, var_names=[\"beta_y_x\", \"alpha_y\"]))\n\n# Or with the convienience function because.summary()\nbecause.summary(result)"
+  },
+  {
+    "objectID": "articles/python_usage.html#specifying-families",
+    "href": "articles/python_usage.html#specifying-families",
+    "title": "Using because-py directly in Python",
+    "section": "Specifying families",
+    "text": "Specifying families\nPass a family dictionary to use non-Gaussian likelihoods:\n#Simulate count data\nlog_lambda = 0.2 + (0.4 * x)\nz_counts = rng.poisson(lam=np.exp(log_lambda))\n\nresult2 = because.fit(\n    equations   = [\"y ~ x\", \"k ~ y\",\"z ~ x\"],\n    data        = {\"x\": x, \"y\": y, \"k\":k,\"z\": z_counts},\n    family      = {\"z\": \"poisson\"},\n    num_samples = 2000,\n    num_warmup  = 1000,\n    num_chains  = 3 \n)\n\nbecause.summary(result2)\nSupported families: \"gaussian\", \"poisson\", \"binomial\", \"negbinomial\", \"ordinal\"."
+  },
+  {
+    "objectID": "articles/python_usage.html#d-separation-testing",
+    "href": "articles/python_usage.html#d-separation-testing",
+    "title": "Using because-py directly in Python",
+    "section": "D-separation testing",
+    "text": "D-separation testing\ndsep_result = because.fit(\n    equations   = [\"y ~ x\", \"k ~ y\",\"z ~ x\"],\n    data        = {\"x\": x, \"y\": y, \"k\":k,\"z\": z_counts},\n    family      = {\"z\": \"poisson\"},\n    num_samples = 2000,\n    num_warmup  = 1000,\n    num_chains  = 3,\n    dsep      = True,\n    dsep_only = True   #skip path coefficient estimation, only run d-sep tests\n)\n\nbecause.dsep_summary(dsep_result)"
+  },
+  {
+    "objectID": "articles/python_usage.html#accessing-the-generated-model-code",
+    "href": "articles/python_usage.html#accessing-the-generated-model-code",
+    "title": "Using because-py directly in Python",
+    "section": "Accessing the generated model code",
+    "text": "Accessing the generated model code\n# Print the auto-generated NumPyro model\nprint(result[\"model_code\"])\nquit"
+  },
+  {
+    "objectID": "articles/reticulate_usage.html",
+    "href": "articles/reticulate_usage.html",
+    "title": "Using because-py via R (reticulate)",
+    "section": "",
+    "text": "#| include: false\nlibrary(because)\nlibrary(because.phybase)"
+  },
+  {
+    "objectID": "articles/reticulate_usage.html#overview",
+    "href": "articles/reticulate_usage.html#overview",
+    "title": "Using because-py via R (reticulate)",
+    "section": "Overview",
+    "text": "Overview\nThe because R package calls because-py transparently whenever you specify engine = \"numpyro\". You do not need to write any Python code — reticulate handles the bridge. The workflow is identical to a JAGS run: same formula syntax, same summary() and plot_dag() methods."
+  },
+  {
+    "objectID": "articles/reticulate_usage.html#a-benchmark-model",
+    "href": "articles/reticulate_usage.html#a-benchmark-model",
+    "title": "Using because-py via R (reticulate)",
+    "section": "A benchmark model",
+    "text": "A benchmark model\nTo demonstrate the speed advantages of the NumPyro engine, we will run the phylogenetic structural equation model (Model 8) from von Hardenberg and Gonzalez-Voyer (2025) using the Rhinogradentia dataset.\nlibrary(because)\nlibrary(because.phybase)\n\ndata(rhino.dat)\ndata(rhino.tree)\n\nsem8_eq &lt;- list(\n    LS ~ BM,\n    NL ~ BM + RS,\n    DD ~ NL\n)\n\nRunning with JAGS (Default)\nLet’s start running the model with the default JAGS engine\nstart.time &lt;- Sys.time()\nfit_jags &lt;- because(\n    equations = sem8_eq,\n    data = rhino.dat,\n    structure = rhino.tree,\n    id_col = \"SP\",\n    engine = \"jags\", #default, so you could also omit this argument\n    parallel = TRUE,\n    n.cores = 3,\n    n.chains = 3,\n    n.iter = 12500, \n    n.burnin = 2500,\n    n.thin = 10 \n)\ntime_diff &lt;- Sys.time() - start.time\ntime_diff\n# Time difference of 2.284368 mins\nNote: The above values for n.iter, n.burnin and n.thin are the default values for JAGS in the because package, and they were chosen to achieve an effective sample size of ~3,000 for all parameters (with 3 chains).\n\n\nRunning with NumPyro\nThe NumPyro engine compiles the model to JAX, leveraging Just-In-Time (JIT) compilation and the highly efficient No-U-Turn Sampler (NUTS).\nstart.time &lt;- Sys.time()\nfit_numpyro &lt;- because(\n    equations = sem8_eq,\n    data = rhino.dat,\n    structure = rhino.tree,\n    id_col = \"SP\",\n    engine = \"numpyro\", #switch to the NumPyro engine\n    parallel = TRUE,\n    n.cores = 3,\n    n.chains = 3,\n    n.iter = 2000,\n    n.warmup = 1000,\n    n.thin = 1 #no thinning needed with numpyro\n)\ntime_diff2 &lt;- Sys.time() - start.time\ntime_diff2\n# Time difference of 19.33303 secs\nNote: The above values for n.iter, n.warmup and n.thin are the default values for NumPyro in the because package, and they were chosen to achieve an effective sample size of ~3,000 for all parameters (with 3 chains). The NumPyro engine does not require thinning due to the efficiency of the NUTS sampler, so n.thin is by default set to 1.\n\n\nIdentical Estimates, Superior Efficiency\nBoth engines arrive at mathematically equivalent parameter estimates, but NumPyro’s NUTS sampler is vastly more efficient per-iteration.\nTo achieve an effective sample size (n.eff) of ~3,000 using JAGS (which defaults to thin = 10), we had to run 12,500 iterations, which took approximately 137 seconds to compute on a Macbook Air M2. with 24 GB RAM.\nIn contrast, NumPyro achieved the same massive n.eff in just 19 seconds with only 2,000 iterations per chain!\nJAGS Output (137 seconds):\n                 Mean    SD Naive SE Time-series SE   2.5%    50% 97.5%  Rhat n.eff\nalpha_DD        0.490 0.204    0.004          0.004  0.090  0.488 0.902 1.001  2915\nalpha_LS        0.516 0.343    0.006          0.010 -0.154  0.520 1.207 1.000  1310\nalpha_NL       -0.013 0.326    0.006          0.010 -0.671 -0.010 0.631 1.000  1015\nbeta_DD_NL      0.589 0.066    0.001          0.001  0.462  0.590 0.716 1.001  3468\nbeta_LS_BM      0.489 0.084    0.002          0.002  0.330  0.489 0.661 1.000  2718\nbeta_NL_BM      0.400 0.071    0.001          0.001  0.262  0.400 0.536 1.000  2847\nbeta_NL_RS      0.636 0.069    0.001          0.001  0.503  0.636 0.771 1.000  3452\nlambda_DD       0.198 0.135    0.002          0.003  0.011  0.175 0.498 1.000  1600\nlambda_LS       0.442 0.135    0.002          0.003  0.195  0.444 0.708 1.002  1733\nlambda_NL       0.549 0.115    0.002          0.003  0.304  0.556 0.753 1.000  2038\nsigma_DD_res    0.984 0.088    0.002          0.002  0.816  0.982 1.164 1.000  2586\nsigma_LS_res    1.065 0.111    0.002          0.002  0.861  1.058 1.293 1.001  2510\nsigma_NL_res    0.836 0.088    0.002          0.002  0.672  0.833 1.012 1.000  2882\nsigma_phylo_DD  0.467 0.202    0.004          0.005  0.110  0.457 0.884 1.000  1732\nsigma_phylo_LS  0.957 0.219    0.004          0.005  0.567  0.946 1.421 1.003  1752\nsigma_phylo_NL  0.936 0.170    0.003          0.004  0.625  0.929 1.293 1.000  1805\nsigma_total_DD  1.108 0.094    0.002          0.002  0.946  1.098 1.309 1.000  2609\nsigma_total_LS  1.447 0.134    0.002          0.003  1.219  1.433 1.737 1.002  2118\nsigma_total_NL  1.264 0.119    0.002          0.003  1.061  1.255 1.529 1.000  2160\nNumPyro Output (19 seconds):\n                 Mean    SD Naive SE Time-series SE   2.5%    50% 97.5%  Rhat n.eff\nalpha_DD         0.477 0.188    0.003          0.004  0.118  0.472 0.859 1.002  2200\nalpha_LS         0.528 0.345    0.006          0.009 -0.150  0.517 1.260 1.003  1385\nalpha_NL        -0.020 0.333    0.006          0.010 -0.715 -0.015 0.639 1.000  1221\nbeta_DD_NL       0.597 0.067    0.001          0.001  0.467  0.599 0.726 1.000  3164\nbeta_LS_BM       0.486 0.086    0.002          0.002  0.315  0.485 0.661 1.000  3120\nbeta_NL_BM       0.402 0.071    0.001          0.001  0.265  0.402 0.537 1.000  3079\nbeta_NL_RS       0.631 0.069    0.001          0.001  0.497  0.633 0.771 1.000  3250\nlambda_DD_phylo  0.138 0.130    0.002          0.006  0.000  0.099 0.463 1.001   540\nlambda_LS_phylo  0.439 0.142    0.003          0.005  0.166  0.439 0.708 1.010   716\nlambda_NL_phylo  0.557 0.115    0.002          0.004  0.305  0.567 0.755 1.000   716\nsigma_DD         1.017 0.090    0.002          0.002  0.845  1.014 1.197 1.001  1431\nsigma_DD_phylo   0.362 0.222    0.004          0.010  0.018  0.336 0.853 1.001   538\nsigma_LS         1.075 0.117    0.002          0.003  0.863  1.071 1.317 1.006  1148\nsigma_LS_phylo   0.963 0.235    0.004          0.008  0.548  0.953 1.454 1.008   876\nsigma_NL         0.839 0.090    0.002          0.003  0.683  0.831 1.031 1.001  1194\nsigma_NL_phylo   0.955 0.173    0.003          0.006  0.630  0.951 1.309 1.000   866\nA Note on Sampling Efficiency: If you look closely at the outputs above, you will notice that while NumPyro generates massive effective sample sizes (n.eff) for the beta regression coefficients, JAGS appears slightly more efficient at sampling the variance components (sigma) and phylogenetic signals (lambda). This highlights a difference in the respective samplers architecture: JAGS uses highly optimized, conjugate Gibbs updates for variance parameters, whereas NumPyro’s NUTS (Hamiltonian Monte Carlo) uses gradient-based trajectories that must navigate complex geometries. However, because NumPyro’s JAX compilation is so incredibly fast, it still generates more effective samples per second across the board. In this example, JAGS generates ~13 effective lambda samples per second and ~21.8 beta samples per second, while NumPyro generates ~34.5 effective lambda samples per second and ~165.7 effective beta samples per second."
+  },
+  {
+    "objectID": "articles/reticulate_usage.html#including-uncertainity-in-trees",
+    "href": "articles/reticulate_usage.html#including-uncertainity-in-trees",
+    "title": "Using because-py via R (reticulate)",
+    "section": "Including uncertainity in trees",
+    "text": "Including uncertainity in trees\nNumPyro truly shines when handling more complex causal models, for example models that incorporate phylogenetic uncertainty across multiple trees (multiPhylo).\nWhile JAGS struggles with indexing into large 3D arrays of precision matrices and evaluating the determinant dynamically at every MCMC step, the because_py NumPyro engine implementation in because handles multiple trees marginalising out the discrete tree index and evaluating all trees simultaneously during the NUTS trajectory using the DiscreteHMCGibbs sampler of NumPyro. This approach is orders of magnitude faster than the naive JAGS implementation, which requires a separate MCMC run for each tree.\nIn the following example, we simulate 10 trees for the same 100 species and run the same model across all 10 trees simultaneously using again both the JAGS and the NumPyro engines.\n# Simulate 10 trees for the 100 species using the 'ape' package\nlibrary(ape)\ndata(rhino.tree)\nset.seed(123)\n\n# Create an empty list to hold our trees\ntrees_list &lt;- list()\n\n# Generate 10 trees by perturbing the branch lengths of the original tree\nfor(i in 1:10) {\n  perturbed_tree &lt;- rhino.tree\n  \n  # Multiply each branch length by a random value between 0.8 and 1.2 (+/- 20% noise)\n  noise &lt;- runif(length(perturbed_tree$edge.length), min = 0.8, max = 1.2)\n  perturbed_tree$edge.length &lt;- perturbed_tree$edge.length * noise\n  \n  trees_list[[i]] &lt;- perturbed_tree\n}\n\n# Convert the list to a formal multiPhylo object\nmulti_tree &lt;- structure(trees_list, class = \"multiPhylo\")\n\n# Assign the exact same species names to the tips of our simulated trees\nfor (i in 1:10) {\n  multi_tree[[i]]$tip.label &lt;- rhino.tree$tip.label\n}\n\n#run the multi tree model using JAGS (this will be very slow)\n\nsystem.time &lt;- Sys.time()\nfit_multi_numpyro &lt;- because(\n    equations = sem8_eq,\n    data = rhino.dat,\n    structure = multi_tree,\n    id_col = \"SP\",\n    engine = \"jags\",\n    parallel = TRUE,\n    n.cores = 3,\n)\ntime_diff_multi_jg &lt;- Sys.time() - system.time\ntime_diff_multi_jg\n# Time difference of 9.70127 mins\n\n#Now run the same multi-tree model using the NumPyro engine (this will be very fast) \nsystem.time &lt;- Sys.time()\nfit_multi_numpyro &lt;- because(\n    equations = sem8_eq,\n    data = rhino.dat,\n    structure = multi_tree,\n    id_col = \"SP\",\n    engine = \"numpyro\",\n    parallel = TRUE,\n    n.cores = 3,\n)\ntime_diff_multi_py &lt;- Sys.time() - system.time\ntime_diff_multi_py\n# Time difference of 21.40381 secs"
+  },
+  {
+    "objectID": "articles/reticulate_usage.html#engine-feature-comparison",
+    "href": "articles/reticulate_usage.html#engine-feature-comparison",
+    "title": "Using because-py via R (reticulate)",
+    "section": "Engine Feature Comparison",
+    "text": "Engine Feature Comparison\nThe because R package abstracts the underlying sampler so you can easily switch between them. Choose the engine that best fits your data and model features.\n\n\n\n\n\n\n\n\n\nFeature\nJAGS (Default)\nNIMBLE\nNumPyro (Python)\n\n\n\n\nDistributions\nGaussian, Poisson, Binomial, NegBinomial, ZIP, ZINB, Ordinal, Multinomial\nAs JAGS\nAs JAGS\n\n\nd-separation testing\nYes\nYes\nYes\n\n\nLatent variables (MAGs)\nYes\nYes\nYes\n\n\nInteraction terms\nYes\nYes\nYes\n\n\nPolynomials\nYes\nYes\nYes\n\n\nDeterministic nodes\nYes\nYes\nYes\n\n\nMulti-scale models (Hierarchical)\nYes\nYes\nYes\n\n\nPriors\nExtensive support\nExtensive support\nStandard priors\n\n\nRandom Effects\nYes\nYes\nYes\n\n\nPhylogenetic Models\nYes\nYes\nYes\n\n\nmultiPhylo (Uncertainty)\nSlow\nFast\nFast (Rao-Blackwellized)\n\n\nMeasurement Error (SE)\nYes\nYes\nNo\n\n\nRepeated Measures\nYes\nYes\nNo\n\n\nPerformance (Large Data)\nSlow\nFast\nExtremely Fast (JAX)\n\n\nHardware\nCPU only\nCPU only\nCPU / GPU / TPU"
+  },
+  {
+    "objectID": "articles/reticulate_usage.html#inspecting-the-generated-numpyro-model-code",
+    "href": "articles/reticulate_usage.html#inspecting-the-generated-numpyro-model-code",
+    "title": "Using because-py via R (reticulate)",
+    "section": "Inspecting the generated NumPyro model code",
+    "text": "Inspecting the generated NumPyro model code\nThe generated NumPyro model is stored as an executable Python string:\ncat(fit_numpyro$numpyro_code)\nThis is useful for verification, customisation, and teaching."
+  },
+  {
+    "objectID": "articles/installation.html",
+    "href": "articles/installation.html",
+    "title": "Installation & Setup",
+    "section": "",
+    "text": "because-py is the Python NumPyro backend for the R because package. It can be used from R (the recommended approach) or directly in Python."
+  },
+  {
+    "objectID": "articles/installation.html#installing-because-py",
+    "href": "articles/installation.html#installing-because-py",
+    "title": "Installation & Setup",
+    "section": "",
+    "text": "because-py is the Python NumPyro backend for the R because package. It can be used from R (the recommended approach) or directly in Python."
+  },
+  {
+    "objectID": "articles/installation.html#from-r-recommended",
+    "href": "articles/installation.html#from-r-recommended",
+    "title": "Installation & Setup",
+    "section": "From R (recommended)",
+    "text": "From R (recommended)\n\nStep 1 — Install the because R package\n# Stable release\nremotes::install_github(\"because-pkg/because@v1.9.0\")\n\n# Latest development version\nremotes::install_github(\"because-pkg/because\")\n\n\nStep 2 — Install reticulate\ninstall.packages(\"reticulate\")\n\n\nStep 3 — Install Python (if needed)\nIf you do not already have Python on your system, reticulate can install Miniconda for you (skip this if Python is already installed):\nreticulate::install_miniconda()\n\n\nStep 4 — One-step setup\nbecause provides a built-in helper that installs all required Python packages (numpyro, jax, jaxlib, networkx, funsor, and because_py) into your active Python environment:\ninstall_because_numpyro()\nThe function automatically detects your active Python environment — including RStudio project-level virtual environments (.venv) and any existing reticulate configuration — falling back to \"r-reticulate\" if none is found.\n\n\nTroubleshooting: wrong Python environment\nIf in a fresh R session reticulate picks up a different Python environment than the one where the packages were installed, because will throw:\nError: Failed to import python module 'because.api'.\nPython is currently running from: /path/to/wrong/python\nEnsure because_py is installed in this exact environment.\nTry running: install_because_numpyro()\nIn this case, point reticulate to the correct environment before calling because():\nreticulate::use_virtualenv(\"r-reticulate\", required = TRUE)"
+  },
+  {
+    "objectID": "articles/installation.html#directly-in-python",
+    "href": "articles/installation.html#directly-in-python",
+    "title": "Installation & Setup",
+    "section": "Directly in Python",
+    "text": "Directly in Python\npip install git+https://github.com/because-pkg/because_py.git\nOr from source:\ngit clone https://github.com/because-pkg/because_py.git\ncd because_py\npip install -e ."
+  },
+  {
+    "objectID": "index.html",
+    "href": "index.html",
+    "title": "because_py",
+    "section": "",
+    "text": "because_py is the Python inference engine behind the R because package. It translates structural equation models (SEMs) specified as R-style formulas into fully probabilistic NumPyro models and samples them with HMC/NUTS.\nYou can use because-py in two ways:"
+  },
+  {
+    "objectID": "index.html#installation",
+    "href": "index.html#installation",
+    "title": "because_py",
+    "section": "Installation",
+    "text": "Installation\nSee the Installation & Setup article for full instructions.\npip install git+https://github.com/because-pkg/because_py.git"
+  },
+  {
+    "objectID": "index.html#how-it-works",
+    "href": "index.html#how-it-works",
+    "title": "because_py",
+    "section": "How it works",
+    "text": "How it works\nbecause_py parses SEM formulas into a directed acyclic graph (DAG), topologically sorts the nodes, and generates a NumPyro model closure on the fly. The model is then sampled with NUTS (No-U-Turn Sampler) via JAX — supporting CPU, GPU, and TPU backends.\nFor a full description of the statistical framework, see the because package documentation."
+  },
+  {
+    "objectID": "reference/builder.compiler.NumPyroBuilder.html",
+    "href": "reference/builder.compiler.NumPyroBuilder.html",
+    "title": "builder.compiler.NumPyroBuilder",
+    "section": "",
+    "text": "builder.compiler.NumPyroBuilder(self, causal_graph, family_dict=None, deterministic_terms=None, cor_matrices=None, fix_latent='loading')\nTakes a parsed causal graph and generates the dynamic NumPyro model via a closure.\n\n\n\n\n\nName\nDescription\n\n\n\n\ngenerate_model_code_string\nReturns a self-contained, executable Python source string that\n\n\ngenerate_model_function\nReturns a callable python function representing the NumPyro model.\n\n\n\n\n\nbuilder.compiler.NumPyroBuilder.generate_model_code_string(data_shapes=None)\nReturns a self-contained, executable Python source string that represents the NumPyro model built by generate_model_function().\nThe output is intended for inspection, auditing, or copy-paste modification in a standalone Python script. Covariance / Cholesky matrices are referenced as arguments so the function signature matches what because-py passes internally.\n:param data_shapes: Optional dict mapping variable names to their shapes (e.g. {“Brain”: (678,), “phy”: (678, 678)}). Used to annotate the function signature with dimension comments. :return: str — a Python source string.\n\n\n\nbuilder.compiler.NumPyroBuilder.generate_model_function(data_for_compilation=None, force_plate_obs=False)\nReturns a callable python function representing the NumPyro model. :param data_for_compilation: Optional dict of the data to statically optimize the JAX trace (e.g. for NaN masking). :param force_plate_obs: If True, forces the use of numpyro.plate for observations even if multiPhylo is detected. Used for WAIC calculation."
+  },
+  {
+    "objectID": "reference/builder.compiler.NumPyroBuilder.html#methods",
+    "href": "reference/builder.compiler.NumPyroBuilder.html#methods",
+    "title": "builder.compiler.NumPyroBuilder",
+    "section": "",
+    "text": "Name\nDescription\n\n\n\n\ngenerate_model_code_string\nReturns a self-contained, executable Python source string that\n\n\ngenerate_model_function\nReturns a callable python function representing the NumPyro model.\n\n\n\n\n\nbuilder.compiler.NumPyroBuilder.generate_model_code_string(data_shapes=None)\nReturns a self-contained, executable Python source string that represents the NumPyro model built by generate_model_function().\nThe output is intended for inspection, auditing, or copy-paste modification in a standalone Python script. Covariance / Cholesky matrices are referenced as arguments so the function signature matches what because-py passes internally.\n:param data_shapes: Optional dict mapping variable names to their shapes (e.g. {“Brain”: (678,), “phy”: (678, 678)}). Used to annotate the function signature with dimension comments. :return: str — a Python source string.\n\n\n\nbuilder.compiler.NumPyroBuilder.generate_model_function(data_for_compilation=None, force_plate_obs=False)\nReturns a callable python function representing the NumPyro model. :param data_for_compilation: Optional dict of the data to statically optimize the JAX trace (e.g. for NaN masking). :param force_plate_obs: If True, forces the use of numpyro.plate for observations even if multiPhylo is detected. Used for WAIC calculation."
+  },
+  {
+    "objectID": "reference/index.html",
+    "href": "reference/index.html",
+    "title": "API Reference",
+    "section": "",
+    "text": "Main entry point for fitting causal models with NumPyro.\n\n\n\napi.fit\nHigh-level API for because-py. Fits a causal hierarchical model using NumPyro.\n\n\napi.get_dsep_equations\nHelper to return implied d-sep claims without fitting the model.\n\n\n\n\n\n\nLower-level classes for building and inspecting NumPyro models.\n\n\n\nbuilder.compiler.NumPyroBuilder\nTakes a parsed causal graph and generates the dynamic NumPyro model via a closure."
+  },
+  {
+    "objectID": "reference/index.html#high-level-api",
+    "href": "reference/index.html#high-level-api",
+    "title": "API Reference",
+    "section": "",
+    "text": "Main entry point for fitting causal models with NumPyro.\n\n\n\napi.fit\nHigh-level API for because-py. Fits a causal hierarchical model using NumPyro.\n\n\napi.get_dsep_equations\nHelper to return implied d-sep claims without fitting the model."
+  },
+  {
+    "objectID": "reference/index.html#model-builder",
+    "href": "reference/index.html#model-builder",
+    "title": "API Reference",
+    "section": "",
+    "text": "Lower-level classes for building and inspecting NumPyro models.\n\n\n\nbuilder.compiler.NumPyroBuilder\nTakes a parsed causal graph and generates the dynamic NumPyro model via a closure."
   }
 ]
