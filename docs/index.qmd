@@ -1,9 +1,9 @@
 ---
-title: "because-py"
+title: "because_py"
 subtitle: "Python NumPyro backend for Bayesian causal inference"
 ---
 
-**because-py** is the Python inference engine behind the R [`because`](https://because-pkg.github.io/because/) package.
+**because_py** is the Python inference engine behind the R [`because`](https://because-pkg.github.io/because/) package.
 It translates structural equation models (SEMs) specified as R-style formulas into fully probabilistic
 [NumPyro](https://num.pyro.ai/) models and samples them with HMC/NUTS.
 
@@ -77,7 +77,7 @@ pip install git+https://github.com/because-pkg/because_py.git
 
 ## How it works
 
-because-py parses SEM formulas into a directed acyclic graph (DAG), topologically sorts the
+because_py parses SEM formulas into a directed acyclic graph (DAG), topologically sorts the
 nodes, and generates a NumPyro model closure on the fly. The model is then sampled with NUTS
 (No-U-Turn Sampler) via JAX — supporting CPU, GPU, and TPU backends.
 
