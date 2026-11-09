@@ -88,7 +88,6 @@ def dsep_summary(result, digits=3, verbose=False):
         )
 
     rows = []
-    has_rhat_tree = any(t.get("rhat_tree") is not None for t in tests)
     for t in tests:
         row = {
             "claim":       t["claim"],
@@ -98,10 +97,8 @@ def dsep_summary(result, digits=3, verbose=False):
             "97.5%":       round(t["ci_97.5"], digits),
             "result":      "PASS" if t["is_independent"] else "FAIL",
             "Rhat":        round(t["rhat"],    digits),
+            "n_eff":       round(t["n_eff"],   1),
         }
-        if has_rhat_tree:
-            row["Rhat_tree"] = round(t["rhat_tree"], digits) if t.get("rhat_tree") is not None else None
-        row["n_eff"] = round(t["n_eff"],   1)
         rows.append(row)
 
     df = pd.DataFrame(rows).set_index("claim")
