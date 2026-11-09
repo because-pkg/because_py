@@ -208,5 +208,61 @@
     "title": "API Reference",
     "section": "",
     "text": "Lower-level classes for building and inspecting NumPyro models.\n\n\n\nbuilder.compiler.NumPyroBuilder\nTakes a parsed causal graph and generates the dynamic NumPyro model via a closure."
+  },
+  {
+    "objectID": "changelog.html",
+    "href": "changelog.html",
+    "title": "Changelog",
+    "section": "",
+    "text": "All notable changes to because_py are documented in this file.\nThe format is based on Keep a Changelog, and this project adheres to Semantic Versioning.\n\n\n\n\n\n\nModular Model Compiler:\n\nFactored the monolithic compiler.py into dedicated, single-responsibility components under because.builder.components:\n\nvariances.py: Universal variance component partitioning (Dirichlet/Beta) and MAG induced residual correlations (LKJ Cholesky).\nmultiscale.py: Deterministic node evaluation (I(...), interactions) and cross-scale hierarchical bridging (coarse-to-fine broadcasting, fine-to-coarse resolution locking via segment_sum).\nrandom_effects.py: Spectral Gaussian marginalization in phylogenetic eigenbases and structural random intercept/slope plates with Cholesky factors.\nlikelihoods.py: Distribution mapping for all 8 supported families (Gaussian, Poisson, Bernoulli/Binomial, NegativeBinomial2, ZIP, ZINB, Categorical, OrderedLogistic) and missing data (NaN) marginalization/imputation.\n\nDecoupled self-contained Python source string generation into because.builder.codegen.\n\nDecoupled Engine & Public API:\n\nSlimmed api.py into a lightweight facade (~240 lines, down from 896), delegating to dedicated submodules:\n\nbecause.engine.env: JAX threadpool limits (OMP_NUM_THREADS, MKL, XLA_FLAGS), cgroup/SLURM/PBS/LSF core auto-detection, and lazy JAX/NumPyro initialization.\nbecause.engine.runner: MCMC kernel configuration (NUTS, DiscreteHMCGibbs for discrete sites) and parallel/sequential execution.\nbecause.engine.ensemble: MultiPhylo wave ensemble runner leveraging jax.pmap across available devices.\nbecause.diagnostics.waic: WAIC calculation and pointwise log-likelihood accumulation across standard and ensemble models.\nbecause.dsep.runner: D-Separation and M-Separation testing loop with automated subsampling and convergence diagnostics.\nbecause.summary: Tabular posterior and d-separation summaries (summary(), dsep_summary()).\n\n\nStandardized Pytest Suite & Hygiene:\n\nEliminated 24 root-level test scripts and obsolete debug scratch files.\nEstablished a formal test suite under tests/ with pytest.ini and tests/conftest.py:\n\ntests/unit/: Fast unit tests (&lt; 1.5s) covering parser, DAG/MAG topology, and compiler codegen without MCMC overhead.\ntests/integration/: End-to-end NUTS MCMC tests covering DAG/MAG d-separation, deterministic nodes, correlated errors, multiscale resolution locking, WAIC, and summaries.\n\n\nR / Reticulate Compatibility:\n\nFull backward compatibility for R’s reticulate caller, preserving function signatures, return structures, and internal helper symbols. Exposes __version__ = \"1.0.0\".\n\n\n\n\n\n\n\n\n\n\nMultiPhylo Wave Ensemble Sampling: Parallel MCMC sampling across phylogenetic tree ensembles using jax.pmap waves.\nTree Index Parameter Monitoring: Injected 1-based K_tree_&lt;struct&gt; parameter into posterior samples for trace diagnostics.\nROPE Sample Preservation: Preserved raw posterior sample draws in dsep_results for region of practical equivalence (ROPE) analysis in R.\nLevel Disambiguation: Resolved variable and structure level disambiguation when hierarchical scales share equal sample sizes.\n\n\n\n\n\nOmitted redundant sigma_tot and sigma_struct for latent indicator variables.\nExcluded latent indicator variables from Pagel’s \\(\\lambda\\) calculation.\n\n\n\n\n\n\n\n\n\nRefined latent indicator exclusions in induced correlation sets.\nEnhanced MCMC parameter alias mapping and kwargs forwarding.\n\n\n\n\n\n\n\n\n\nMean-centered group random effects in NumPyro builder to prevent confounding with global intercepts.\nSupport for parameter aliases, kwargs forwarding, and fit_numpyro_model alias.\nAdded max_treedepth and adapt_delta control arguments to fit().\n\n\n\n\n\nFixed NetworkX cycle and string iteration bugs when latents are passed as strings.\nGraceful handling of evaluation errors for unused computed variables in hierarchical DAGs.\n\n\n\n\n\n\n\n\n\nUniversal Variance Component Partitioning: Dirichlet / Beta prior partitioning for variables with multiple competing error components (residual, spatial GP, induced correlation).\nNon-Centered Parameterization (NCP) for multivariate latent errors in MAG models.\nLazy JAX/NumPyro initialization with automatic CPU core detection (SLURM, PBS, cgroups) and thread limits.\n\n\n\n\n\n\n\n\n\nMAG Induced Correlations: Support for unmeasured latent confounders using 2×2 LKJ Cholesky correlation priors.\nDiscreteHMCGibbs & MultiPhylo: Analytical spectral Gaussian marginalization for multiPhylo trees in dcat mode.\nWAIC Diagnostics: Rao-Blackwellized WAIC calculations for models with discrete tree mixtures.\nSummary APIs: Added summary() and dsep_summary() returning formatted pandas DataFrames.\n\n\n\n\n\n\n\n\n\nFormula-driven SEM compilation to NumPyro models.\nTopological DAG sorting and minimal d-separation basis set generation.\nNUTS sampling via JAX.\nSupport for Gaussian, Poisson, Binomial, and Negative Binomial likelihoods.\nRandom intercepts and spatial/phylogenetic covariance matrix support via Cholesky decomposition."
+  },
+  {
+    "objectID": "changelog.html#section",
+    "href": "changelog.html#section",
+    "title": "Changelog",
+    "section": "",
+    "text": "Modular Model Compiler:\n\nFactored the monolithic compiler.py into dedicated, single-responsibility components under because.builder.components:\n\nvariances.py: Universal variance component partitioning (Dirichlet/Beta) and MAG induced residual correlations (LKJ Cholesky).\nmultiscale.py: Deterministic node evaluation (I(...), interactions) and cross-scale hierarchical bridging (coarse-to-fine broadcasting, fine-to-coarse resolution locking via segment_sum).\nrandom_effects.py: Spectral Gaussian marginalization in phylogenetic eigenbases and structural random intercept/slope plates with Cholesky factors.\nlikelihoods.py: Distribution mapping for all 8 supported families (Gaussian, Poisson, Bernoulli/Binomial, NegativeBinomial2, ZIP, ZINB, Categorical, OrderedLogistic) and missing data (NaN) marginalization/imputation.\n\nDecoupled self-contained Python source string generation into because.builder.codegen.\n\nDecoupled Engine & Public API:\n\nSlimmed api.py into a lightweight facade (~240 lines, down from 896), delegating to dedicated submodules:\n\nbecause.engine.env: JAX threadpool limits (OMP_NUM_THREADS, MKL, XLA_FLAGS), cgroup/SLURM/PBS/LSF core auto-detection, and lazy JAX/NumPyro initialization.\nbecause.engine.runner: MCMC kernel configuration (NUTS, DiscreteHMCGibbs for discrete sites) and parallel/sequential execution.\nbecause.engine.ensemble: MultiPhylo wave ensemble runner leveraging jax.pmap across available devices.\nbecause.diagnostics.waic: WAIC calculation and pointwise log-likelihood accumulation across standard and ensemble models.\nbecause.dsep.runner: D-Separation and M-Separation testing loop with automated subsampling and convergence diagnostics.\nbecause.summary: Tabular posterior and d-separation summaries (summary(), dsep_summary()).\n\n\nStandardized Pytest Suite & Hygiene:\n\nEliminated 24 root-level test scripts and obsolete debug scratch files.\nEstablished a formal test suite under tests/ with pytest.ini and tests/conftest.py:\n\ntests/unit/: Fast unit tests (&lt; 1.5s) covering parser, DAG/MAG topology, and compiler codegen without MCMC overhead.\ntests/integration/: End-to-end NUTS MCMC tests covering DAG/MAG d-separation, deterministic nodes, correlated errors, multiscale resolution locking, WAIC, and summaries.\n\n\nR / Reticulate Compatibility:\n\nFull backward compatibility for R’s reticulate caller, preserving function signatures, return structures, and internal helper symbols. Exposes __version__ = \"1.0.0\"."
+  },
+  {
+    "objectID": "changelog.html#section-1",
+    "href": "changelog.html#section-1",
+    "title": "Changelog",
+    "section": "",
+    "text": "MultiPhylo Wave Ensemble Sampling: Parallel MCMC sampling across phylogenetic tree ensembles using jax.pmap waves.\nTree Index Parameter Monitoring: Injected 1-based K_tree_&lt;struct&gt; parameter into posterior samples for trace diagnostics.\nROPE Sample Preservation: Preserved raw posterior sample draws in dsep_results for region of practical equivalence (ROPE) analysis in R.\nLevel Disambiguation: Resolved variable and structure level disambiguation when hierarchical scales share equal sample sizes.\n\n\n\n\n\nOmitted redundant sigma_tot and sigma_struct for latent indicator variables.\nExcluded latent indicator variables from Pagel’s \\(\\lambda\\) calculation."
+  },
+  {
+    "objectID": "changelog.html#section-2",
+    "href": "changelog.html#section-2",
+    "title": "Changelog",
+    "section": "",
+    "text": "Refined latent indicator exclusions in induced correlation sets.\nEnhanced MCMC parameter alias mapping and kwargs forwarding."
+  },
+  {
+    "objectID": "changelog.html#section-3",
+    "href": "changelog.html#section-3",
+    "title": "Changelog",
+    "section": "",
+    "text": "Mean-centered group random effects in NumPyro builder to prevent confounding with global intercepts.\nSupport for parameter aliases, kwargs forwarding, and fit_numpyro_model alias.\nAdded max_treedepth and adapt_delta control arguments to fit().\n\n\n\n\n\nFixed NetworkX cycle and string iteration bugs when latents are passed as strings.\nGraceful handling of evaluation errors for unused computed variables in hierarchical DAGs."
+  },
+  {
+    "objectID": "changelog.html#section-4",
+    "href": "changelog.html#section-4",
+    "title": "Changelog",
+    "section": "",
+    "text": "Universal Variance Component Partitioning: Dirichlet / Beta prior partitioning for variables with multiple competing error components (residual, spatial GP, induced correlation).\nNon-Centered Parameterization (NCP) for multivariate latent errors in MAG models.\nLazy JAX/NumPyro initialization with automatic CPU core detection (SLURM, PBS, cgroups) and thread limits."
+  },
+  {
+    "objectID": "changelog.html#section-5",
+    "href": "changelog.html#section-5",
+    "title": "Changelog",
+    "section": "",
+    "text": "MAG Induced Correlations: Support for unmeasured latent confounders using 2×2 LKJ Cholesky correlation priors.\nDiscreteHMCGibbs & MultiPhylo: Analytical spectral Gaussian marginalization for multiPhylo trees in dcat mode.\nWAIC Diagnostics: Rao-Blackwellized WAIC calculations for models with discrete tree mixtures.\nSummary APIs: Added summary() and dsep_summary() returning formatted pandas DataFrames."
+  },
+  {
+    "objectID": "changelog.html#section-6",
+    "href": "changelog.html#section-6",
+    "title": "Changelog",
+    "section": "",
+    "text": "Formula-driven SEM compilation to NumPyro models.\nTopological DAG sorting and minimal d-separation basis set generation.\nNUTS sampling via JAX.\nSupport for Gaussian, Poisson, Binomial, and Negative Binomial likelihoods.\nRandom intercepts and spatial/phylogenetic covariance matrix support via Cholesky decomposition."
   }
 ]
