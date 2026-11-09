@@ -158,15 +158,21 @@ def run_dsep_tests(
 
             chain_samples = np.asarray(samples_grouped[beta_name])
             if has_multiPhylo_ensemble and len(test_tree_samples) > 0 and test_tree_samples[0][beta_name].shape[0] >= 2:
-                rhat = float(np.max([diag.gelman_rubin(ts[beta_name]) for ts in test_tree_samples]))
+                tree_rhats = [float(diag.gelman_rubin(ts[beta_name])) for ts in test_tree_samples]
+                rhat = float(np.mean(tree_rhats))
+                rhat_max = float(np.max(tree_rhats))
+                tree_ess = [float(diag.effective_sample_size(ts[beta_name])) for ts in test_tree_samples]
+                n_eff = float(np.sum(tree_ess))
             else:
                 rhat = float(diag.gelman_rubin(chain_samples))
-            n_eff = float(diag.effective_sample_size(chain_samples))
+                rhat_max = rhat
+                n_eff = float(diag.effective_sample_size(chain_samples))
 
             is_independent = (ci_lower < 0 < ci_upper)
 
             if not quiet:
-                print(f" -> {beta_name} = {mean_val:.3f} [{ci_lower:.3f}, {ci_upper:.3f}] (Rhat={rhat:.3f})")
+                rhat_msg = f"Rhat={rhat:.3f} (max={rhat_max:.3f})" if has_multiPhylo_ensemble else f"Rhat={rhat:.3f}"
+                print(f" -> {beta_name} = {mean_val:.3f} [{ci_lower:.3f}, {ci_upper:.3f}] ({rhat_msg})")
 
             dsep_results.append({
                 "claim": f"{resp} _|_ {test_var} | {', '.join(claim['conditioning_set'])}",
@@ -177,6 +183,7 @@ def run_dsep_tests(
                 "ci_97.5": ci_upper,
                 "is_independent": is_independent,
                 "rhat": rhat,
+                "rhat_max": rhat_max,
                 "n_eff": n_eff,
                 "samples": np.asarray(posteriors).tolist()
             })

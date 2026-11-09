@@ -88,6 +88,7 @@ def dsep_summary(result, digits=3, verbose=False):
         )
 
     rows = []
+    has_rhat_max = any(t.get("rhat_max") is not None and t.get("rhat_max") != t.get("rhat") for t in tests)
     for t in tests:
         row = {
             "claim":       t["claim"],
@@ -97,8 +98,10 @@ def dsep_summary(result, digits=3, verbose=False):
             "97.5%":       round(t["ci_97.5"], digits),
             "result":      "PASS" if t["is_independent"] else "FAIL",
             "Rhat":        round(t["rhat"],    digits),
-            "n_eff":       round(t["n_eff"],   1),
         }
+        if has_rhat_max:
+            row["Rhat_max"] = round(t["rhat_max"], digits) if t.get("rhat_max") is not None else None
+        row["n_eff"] = round(t["n_eff"],   1)
         rows.append(row)
 
     df = pd.DataFrame(rows).set_index("claim")
