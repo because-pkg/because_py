@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python ≥ 3.8](https://img.shields.io/badge/python-≥3.8-blue)](https://www.python.org/)
 
-because-py translates structural equation models (SEMs) specified as R-style formulas into fully probabilistic [NumPyro](https://num.pyro.ai/) models and samples them with HMC/NUTS via JAX.
+because_py translates structural equation models (SEMs) specified as R-style formulas into fully probabilistic [NumPyro](https://num.pyro.ai/) models and samples them with HMC/NUTS via JAX.
 
 ---
 
