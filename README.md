@@ -1,4 +1,4 @@
-# because-py
+# because_py
 
 **Python NumPyro backend for the R [`because`](https://because-pkg.github.io) package.**
 
@@ -14,7 +14,7 @@ because-py translates structural equation models (SEMs) specified as R-style for
 
 ### From R (recommended)
 
-because-py is designed to be used from R via the `because` package. A one-step helper installs all required Python dependencies automatically:
+because_py is designed to be used from R via the `because` package. A one-step helper installs all required Python dependencies automatically:
 
 ```r
 library(because)
@@ -89,7 +89,7 @@ For the R package documentation:
 
 ## How it works
 
-because-py parses SEM formulas into a directed acyclic graph (DAG), topologically sorts the nodes, and generates a NumPyro model closure on the fly. The model is sampled with NUTS (No-U-Turn Sampler) via JAX.
+because_py parses SEM formulas into a directed acyclic graph (DAG), topologically sorts the nodes, and generates a NumPyro model closure on the fly. The model is sampled with NUTS (No-U-Turn Sampler) via JAX.
 
 ---
 
