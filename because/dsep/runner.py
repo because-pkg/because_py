@@ -46,7 +46,7 @@ def run_dsep_tests(
     if dsep_equations_to_run is not None and len(dsep_equations_to_run) > 0 and isinstance(dsep_equations_to_run[0], dict):
         dsep_equations = dsep_equations_to_run
     else:
-        dsep_equations = graph.generate_dsep_equations(latent=latent)
+        dsep_equations = graph.generate_dsep_equations(latent=latent, family=family)
         if dsep_equations_to_run is not None:
             norm_to_run = [" ".join(e.split()) for e in dsep_equations_to_run]
             dsep_equations = [c for c in dsep_equations if " ".join(c["equation_string"].split()) in norm_to_run]

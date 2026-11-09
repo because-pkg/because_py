@@ -188,7 +188,7 @@ class CausalGraph:
                         
         return correlations
         
-    def generate_dsep_equations(self, latent=None):
+    def generate_dsep_equations(self, latent=None, family=None):
         """
         Converts the basis set and induced correlations into string equations suitable for testing.
         """
@@ -202,6 +202,15 @@ class CausalGraph:
         if latent:
             for l in latent:
                 latent_children.update(self.dag.successors(l))
+
+        discrete_families = {
+            "binomial", "bernoulli", "poisson", "negbinom", "negative_binomial",
+            "multinomial", "categorical", "ordered", "beta_binomial"
+        }
+        def is_discrete(v):
+            if family and isinstance(family, dict):
+                return str(family.get(v, "gaussian")).lower() in discrete_families
+            return False
                 
         # 1. Standard / Filtered Basis Set Claims
         for claim in basis:
@@ -216,6 +225,12 @@ class CausalGraph:
             r_root = resp in root_nodes
             t_root = test_var in root_nodes
             if r_root and not t_root:
+                resp, test_var = test_var, resp
+
+            # Rule 3: Distributional Parsimony Rule (ANOVA / t-test priority)
+            # Testing continuous ~ discrete/categorical avoids non-linear GLMs (logistic/count)
+            # on the response and converts tests into fast, linear ANOVAs/t-tests.
+            if is_discrete(resp) and not is_discrete(test_var):
                 resp, test_var = test_var, resp
                 
             orig_eq = self.parsed_equations.get(resp)
