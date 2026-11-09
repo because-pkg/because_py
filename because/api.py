@@ -23,6 +23,8 @@ from .diagnostics.waic import (
 from .dsep.runner import run_dsep_tests
 from .summary import summary, dsep_summary
 
+__version__ = "1.0.0"
+
 # Backwards compatibility aliases for private functions
 _accumulate_waic_from_log_lik = accumulate_waic_from_log_lik
 _calculate_waic_ensemble = calculate_waic_ensemble
