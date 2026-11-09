@@ -82,6 +82,8 @@ result = because.fit(
 Full documentation including articles and API reference:
 **[because-pkg.github.io/because_py/](https://because-pkg.github.io/because_py/)**
 
+For release notes and version history, see **[CHANGELOG.md](CHANGELOG.md)**.
+
 For the R package documentation:
 **[because-pkg.github.io](https://because-pkg.github.io)**
 
