@@ -4,10 +4,7 @@ NumPyro probabilistic models.
 """
 
 import numpy as np
-import jax.numpy as jnp
-import jax
-import numpyro
-import numpyro.distributions as dist
+from ..engine.env import get_jax_primitives
 
 from .codegen import generate_model_code_string
 from .components.variances import (
@@ -88,6 +85,12 @@ class NumPyroBuilder:
         :param data_for_compilation: Optional dict of the data to statically optimize the JAX trace.
         :param force_plate_obs: If True, forces the use of numpyro.plate for observations even if multiPhylo is detected.
         """
+        prim = get_jax_primitives()
+        jax = prim["jax"]
+        jnp = prim["jnp"]
+        numpyro = prim["numpyro"]
+        dist = prim["dist"]
+
         topo_order = self.graph.get_topological_order()
         equations_dict = self.parsed_equations
         families = self.family_dict
