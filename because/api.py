@@ -29,14 +29,18 @@ _calculate_waic_ensemble = calculate_waic_ensemble
 _calculate_waic_internal = calculate_waic_internal
 
 
+_JAX_EXPORTS = {
+    "jax", "jnp", "numpyro", "dist", "diag",
+    "MCMC", "NUTS", "Predictive", "DiscreteHMCGibbs"
+}
+
 def __getattr__(name):
     """
-    Expose JAX and NumPyro module attributes (jax, jnp, numpyro, MCMC, NUTS, etc.)
-    lazily on because.api for backwards compatibility with existing R/reticulate callers.
+    Expose JAX and NumPyro module attributes lazily on because.api
+    for backwards compatibility with existing R/reticulate callers.
     """
-    primitives = get_jax_primitives()
-    if name in primitives:
-        return primitives[name]
+    if name in _JAX_EXPORTS:
+        return get_jax_primitives()[name]
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
 
