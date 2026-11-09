@@ -64,7 +64,7 @@ def run_dsep_tests(
 
     N_total = len(next(iter(data.values())))
     dsep_data = data
-    if N_total > dsep_max_obs:
+    if N_total > dsep_max_obs and not cor_matrices:
         if not quiet:
             print(f"Subsampling data to {dsep_max_obs} rows for fast testing.")
         idx = np.random.choice(N_total, size=dsep_max_obs, replace=False)
