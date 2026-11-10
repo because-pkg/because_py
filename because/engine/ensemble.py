@@ -91,7 +91,9 @@ def run_ensemble_chains(
                 collect_fields=collect_fields,
                 remove_sites=(),
             )
-            return states[mcmc_obj._sample_field]
+            raw_z = states[mcmc_obj._sample_field]
+            post_fn = mcmc_obj.sampler.postprocess_fn((), {"_tree_idx": tree_idx})
+            return jax.vmap(post_fn)(raw_z)
 
         pmap_fn = jax.pmap(_pmap_single_chain, devices=jax.local_devices()[:W])
         all_tree_indices = np.repeat(np.arange(n_trees, dtype=np.int32), n_chains)
