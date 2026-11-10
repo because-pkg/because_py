@@ -37,6 +37,13 @@ def create_family_distribution(
 
     elif family == "binomial":
         distribution = dist.Bernoulli(logits=mu)
+        if var not in induced_cor_set:
+            for g_name, sig_g in sigma_struct_dict.items():
+                tot_res_var = (jnp.pi ** 2) / 3.0
+                numpyro.deterministic(
+                    f"lambda_{var}_{g_name}",
+                    (sig_g ** 2) / (sig_g ** 2 + tot_res_var)
+                )
 
     elif family == "negbinomial":
         r = numpyro.sample(f"r_{var}", dist.Gamma(2.0, 0.1))

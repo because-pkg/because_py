@@ -175,6 +175,10 @@ def generate_model_code_string(builder, data_shapes=None):
         elif family == "binomial":
             lines.append(f"{ind()}with numpyro.plate('{var}_plate', N):")
             lines.append(f"{ind(2)}numpyro.sample('{var}', dist.Bernoulli(logits=mu_{var}), obs={var})")
+            if var not in induced_cor_set:
+                for grp in sigma_struct_names:
+                    lines.append(f"{ind()}numpyro.deterministic('lambda_{var}_{grp}',")
+                    lines.append(f"{ind()}    sigma_{var}_{grp}**2 / (sigma_{var}_{grp}**2 + (jnp.pi**2)/3.0))")
         elif family == "negbinomial":
             lines.append(f"{ind()}r_{var} = numpyro.sample('r_{var}', dist.Gamma(2.0, 0.1))")
             lines.append(f"{ind()}with numpyro.plate('{var}_plate', N):")
