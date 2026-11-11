@@ -236,12 +236,6 @@ def fit(
                 quiet=quiet,
             )
 
-        results["samples"] = numpy_samples
-        results["mcmc"] = mcmc
-        results["parameter_map"] = None
-        results["model_string"] = "NumPyro Causal Hierarchical Model"
-        results["model_code"] = model_code_str
-
         if calculate_waic:
             if not quiet:
                 print("Calculating WAIC...")
@@ -261,6 +255,34 @@ def fit(
                 import warnings
                 warnings.warn(f"WAIC calculation failed or exceeded memory: {e}. Model samples preserved without WAIC.")
                 results["waic"] = None
+
+        # Filter out observation-level vectors (e.g. u_*[1..N], z_*[1..N], err_res_*[1..N])
+        # keeping only structural causal parameters (beta, alpha, sigma, lambda, rho, cutpoint, K_tree)
+        # to prevent memory explosion when returning across reticulate boundary into R
+        filtered_samples = {}
+        for param_name, param_val in numpy_samples.items():
+            val_arr = np.asarray(param_val)
+            if val_arr.ndim <= 2:
+                filtered_samples[param_name] = val_arr
+            elif val_arr.ndim == 3 and val_arr.shape[-1] <= 20:
+                filtered_samples[param_name] = val_arr
+            elif val_arr.ndim == 4 and val_arr.shape[-1] <= 4:
+                filtered_samples[param_name] = val_arr
+            elif any(param_name.startswith(p) for p in ("alpha_", "beta_", "sigma_", "lambda_", "rho_", "tau_", "cutpoint", "K_tree_")):
+                if val_arr.shape[-1] <= 50:
+                    filtered_samples[param_name] = val_arr
+
+        # Emergency auto-save to disk: guarantees MCMC draws are preserved even if R post-processing fails
+        try:
+            np.savez_compressed("because_checkpoint_samples.npz", **filtered_samples)
+        except Exception:
+            pass
+
+        results["samples"] = filtered_samples
+        results["mcmc"] = None  # Do not serialize heavy JAX MCMC object with all internal traces across reticulate
+        results["parameter_map"] = None
+        results["model_string"] = "NumPyro Causal Hierarchical Model"
+        results["model_code"] = model_code_str
     else:
         rng_key = jax.random.PRNGKey(seed)
 
