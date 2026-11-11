@@ -82,8 +82,11 @@ def sample_spectral_marginalization(
             mu = mu + err
 
     matrix_dict = custom_transforms[group_name]["matrix"]
-    eigvals_all = jnp.array(matrix_dict["eigvals"])
-    eigvecs_all = jnp.array(matrix_dict["eigvecs"])
+    if "_cached_eigvals" not in matrix_dict:
+        matrix_dict["_cached_eigvals"] = jnp.asarray(matrix_dict["eigvals"])
+        matrix_dict["_cached_eigvecs"] = jnp.asarray(matrix_dict["eigvecs"])
+    eigvals_all = matrix_dict["_cached_eigvals"]
+    eigvecs_all = matrix_dict["_cached_eigvecs"]
     n_trees = eigvals_all.shape[-1]
 
     k_name = f"K_tree_{group_name}"

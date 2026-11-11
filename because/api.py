@@ -122,6 +122,17 @@ def fit(
     jax = prim["jax"]
     jnp = prim["jnp"]
 
+    # Detach and convert any R matrices (e.g. multiPhylo eigen-decompositions) into native NumPy arrays
+    # once at entry to prevent reticulate from allocating vector memory on each model call.
+    if cor_matrices:
+        for v in cor_matrices.values():
+            if isinstance(v, dict) and isinstance(v.get("matrix"), dict):
+                mat_dict = v["matrix"]
+                if "eigvals" in mat_dict and not isinstance(mat_dict["eigvals"], np.ndarray):
+                    mat_dict["eigvals"] = np.asarray(mat_dict["eigvals"])
+                if "eigvecs" in mat_dict and not isinstance(mat_dict["eigvecs"], np.ndarray):
+                    mat_dict["eigvecs"] = np.asarray(mat_dict["eigvecs"])
+
     # Parse equations and build causal graph
     parser = FormulaParser(equations)
     parsed = parser.parse()

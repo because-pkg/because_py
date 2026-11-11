@@ -101,9 +101,15 @@ class NumPyroBuilder:
         L_matrices = {}
         custom_transforms = {}
         for k, mat in cor_mats.items():
-            if isinstance(mat, dict) and "matrix" in mat and "transform_func" in mat:
-                custom_transforms[k] = mat
-                continue
+            if isinstance(mat, dict) and "matrix" in mat:
+                if isinstance(mat["matrix"], dict):
+                    if "eigvals" in mat["matrix"] and not isinstance(mat["matrix"]["eigvals"], np.ndarray):
+                        mat["matrix"]["eigvals"] = np.asarray(mat["matrix"]["eigvals"])
+                    if "eigvecs" in mat["matrix"] and not isinstance(mat["matrix"]["eigvecs"], np.ndarray):
+                        mat["matrix"]["eigvecs"] = np.asarray(mat["matrix"]["eigvecs"])
+                if "transform_func" in mat:
+                    custom_transforms[k] = mat
+                    continue
             mat = np.array(mat, dtype=float)
             L_matrices[k] = jax.scipy.linalg.cholesky(mat, lower=True)
 
