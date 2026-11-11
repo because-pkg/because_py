@@ -7,7 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.0.0] - 2026-11-09
+## [1.0.0] - 2026-11-11
+
+### Performance & Memory Optimizations
+* **Batched, Memory-Capped WAIC for MultiPhylo Ensembles**:
+  * Implemented batched log-likelihood evaluation (`batch_size = 50`) and systematic sample thinning (100 draws/tree across 30 trees = 3,000 ensemble draws) in `calculate_waic_ensemble()`.
+  * Reduces peak memory usage from $> 24\text{ GB}$ to $< 250\text{ MB}$, eliminating vector memory limit crashes on comparative datasets with large covariance matrices.
+  * Added robust exception handling with `warnings.warn` so that diagnostic calculation never discards completed MCMC sampling results.
+* **Liability-Scale Pagel's Lambda for Binomial Phylogenetic Models**:
+  * Automatically evaluates Pagel's $\lambda$ on the continuous latent liability scale for binary traits with phylogenetic covariance structures, incorporating the $\pi^2/3 \approx 3.2899$ disturbance variance.
+* **Distributional Parsimony Rule for d-Separation**:
+  * In `CausalGraph`, automatically prioritizes continuous variables as responses in auxiliary d-separation tests against discrete/categorical variables, avoiding slow link functions while preserving exact d-separation topology.
+* **Ensemble Postprocessing and Parameter Constraints in `jax.pmap`**:
+  * Applied `postprocess_fn` to pmapped chain states, ensuring sampled parameters (such as positive variance components and Cholesky correlations) are mapped to their constrained support and deterministic sites are evaluated.
+* **Ensemble D-Separation Diagnostics & Subsampling Safeguards**:
+  * Added `Rhat_max` and ensemble-summed ESS to d-separation summary tables for multiPhylo models.
+  * Disabled `dsep_max_obs` subsampling when structured covariance matrices (`cor_matrices`) are present to ensure complete tree topology matching.
+* **Lazy JAX/NumPyro Imports**:
+  * Deferred imports in model compiler to prevent premature JAX threadpool initialization before `XLA_FLAGS` are set.
 
 ### Major Architecture Refactoring
 * **Modular Model Compiler**:
