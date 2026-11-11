@@ -58,22 +58,55 @@ def accumulate_waic_from_log_lik(log_lik_dict):
     }
 
 
-def calculate_waic_ensemble(ens_model_func, tree_samples_list, jax_data):
+def calculate_waic_ensemble(ens_model_func, tree_samples_list, jax_data, max_samples_per_tree=100, batch_size=50):
     """
-    Computes WAIC across multiPhylo ensemble chains.
+    Computes WAIC across multiPhylo ensemble chains with memory-efficient batching.
     """
+    import gc
     from numpyro.infer import log_likelihood
     prim = get_jax_primitives()
     jnp = prim["jnp"]
 
     ll_per_tree = []
     for k, ts in enumerate(tree_samples_list):
-        flat_k = {
-            param: jnp.array(val.reshape(-1, *val.shape[2:]))
-            for param, val in ts.items()
-        }
-        ll_k = log_likelihood(ens_model_func, flat_k, _tree_idx=jnp.int32(k), **jax_data)
-        ll_per_tree.append({var: np.asarray(v) for var, v in ll_k.items()})
+        first_val = next(iter(ts.values()))
+        n_chains_k = first_val.shape[0]
+        n_iters_k = first_val.shape[1]
+        total_k = n_chains_k * n_iters_k
+
+        if total_k > max_samples_per_tree:
+            sub_idx = np.linspace(0, total_k - 1, max_samples_per_tree, dtype=int)
+        else:
+            sub_idx = np.arange(total_k)
+
+        n_sub = len(sub_idx)
+        tree_var_lls = {}
+
+        for b_start in range(0, n_sub, batch_size):
+            b_end = min(n_sub, b_start + batch_size)
+            b_indices = sub_idx[b_start:b_end]
+
+            batch_k = {}
+            for param, val in ts.items():
+                v_flat = val.reshape(-1, *val.shape[2:])
+                batch_k[param] = jnp.array(v_flat[b_indices])
+
+            ll_batch = log_likelihood(ens_model_func, batch_k, _tree_idx=jnp.int32(k), **jax_data)
+            for var_name, v in ll_batch.items():
+                arr = np.asarray(v)
+                if var_name not in tree_var_lls:
+                    tree_var_lls[var_name] = [arr]
+                else:
+                    tree_var_lls[var_name].append(arr)
+
+            del batch_k, ll_batch
+
+        ll_per_tree.append({
+            var: np.concatenate(tree_var_lls[var], axis=0)
+            for var in tree_var_lls.keys()
+        })
+        del tree_var_lls
+        gc.collect()
 
     if not ll_per_tree or not ll_per_tree[0]:
         return None
@@ -82,7 +115,10 @@ def calculate_waic_ensemble(ens_model_func, tree_samples_list, jax_data):
         var_name: np.concatenate([ll_per_tree[k][var_name] for k in range(len(tree_samples_list))], axis=0)
         for var_name in ll_per_tree[0].keys()
     }
-    return accumulate_waic_from_log_lik(log_lik_dict)
+    res = accumulate_waic_from_log_lik(log_lik_dict)
+    del log_lik_dict, ll_per_tree
+    gc.collect()
+    return res
 
 
 def calculate_waic_internal(model_func, mcmc, jax_data):
