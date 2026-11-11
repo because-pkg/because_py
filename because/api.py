@@ -235,16 +235,21 @@ def fit(
             if not quiet:
                 print("Calculating WAIC...")
 
-            has_multiPhylo = cor_matrices and any(
-                isinstance(v, dict) and v.get("type") == "multiPhylo" for v in cor_matrices.values()
-            )
-            if has_multiPhylo_ensemble:
-                results["waic"] = calculate_waic_ensemble(ens_model_func, tree_samples_list, jax_data)
-            elif has_multiPhylo:
-                waic_model_func = compiler.generate_model_function(data_for_compilation=data, force_plate_obs=True)
-                results["waic"] = calculate_waic_internal(waic_model_func, mcmc, jax_data)
-            else:
-                results["waic"] = calculate_waic_internal(model_func, mcmc, jax_data)
+            try:
+                has_multiPhylo = cor_matrices and any(
+                    isinstance(v, dict) and v.get("type") == "multiPhylo" for v in cor_matrices.values()
+                )
+                if has_multiPhylo_ensemble:
+                    results["waic"] = calculate_waic_ensemble(ens_model_func, tree_samples_list, jax_data)
+                elif has_multiPhylo:
+                    waic_model_func = compiler.generate_model_function(data_for_compilation=data, force_plate_obs=True)
+                    results["waic"] = calculate_waic_internal(waic_model_func, mcmc, jax_data)
+                else:
+                    results["waic"] = calculate_waic_internal(model_func, mcmc, jax_data)
+            except Exception as e:
+                import warnings
+                warnings.warn(f"WAIC calculation failed or exceeded memory: {e}. Model samples preserved without WAIC.")
+                results["waic"] = None
     else:
         rng_key = jax.random.PRNGKey(seed)
 
