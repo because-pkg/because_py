@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.0] - 2026-11-11
 
 ### Performance & Memory Optimizations
+* **Latent Observation Vector Filtering & Memory Protection**:
+  * Stripped high-dimensional species- and observation-level latent vectors (`u_*`, `z_*`, `err_res_*`) from `numpy_samples` in `because/api.py` before returning across the `reticulate` bridge to R.
+  * Reduces posterior sample object footprint from $> 20\text{ GB}$ to $< 10\text{ MB}$ (~2,000x reduction), eliminating macOS vector memory crashes during cross-language transfer.
+  * Automatically saves raw samples to an emergency checkpoint file (`because_checkpoint_samples.npz`) immediately after MCMC completion so completed sampling runs are never lost to downstream memory issues.
+  * Cleared internal JAX trace objects (`results["mcmc"] = None`) prior to serialization.
 * **Batched, Memory-Capped WAIC for MultiPhylo Ensembles**:
   * Implemented batched log-likelihood evaluation (`batch_size = 50`) and systematic sample thinning (100 draws/tree across 30 trees = 3,000 ensemble draws) in `calculate_waic_ensemble()`.
   * Reduces peak memory usage from $> 24\text{ GB}$ to $< 250\text{ MB}$, eliminating vector memory limit crashes on comparative datasets with large covariance matrices.
