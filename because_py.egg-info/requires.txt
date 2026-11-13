@@ -1,6 +1,0 @@
-numpyro
-jax
-jaxlib
-numpy
-networkx
-funsor
